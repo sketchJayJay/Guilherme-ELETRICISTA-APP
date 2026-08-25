@@ -5,19 +5,24 @@ Sistema web responsivo para a rotina de um eletricista, pensado em **serviços p
 ## O que já está pronto
 
 - Dashboard com serviços do dia, próximos, atrasados e resumo financeiro
-- Clientes com busca, endereço, WhatsApp e histórico
+- Clientes com busca por nome/telefone, endereço, WhatsApp, Maps e histórico
 - Agenda por dia, semana e mês
+- Serviço com cadastro ultrarrápido: cliente → serviço → dia → salvar, com opções avançadas recolhidas
 - Serviço com data e **horário opcional**
 - Cronômetro com iniciar, pausar e zerar
 - Cobrança por valor fechado ou por hora
 - Ordem de serviço imprimível / salvável em PDF pelo navegador
+- Fotos de **antes e depois** tiradas pelo celular e vinculadas ao serviço
+- Assinatura do cliente direto na tela do smartphone, incluída na OS
+- Botão de endereço para abrir direto no Google Maps
+- Cálculo de **lucro real por serviço** com custo de materiais, ajudante e outros gastos
 - Orçamentos com itens, materiais, mão de obra, desconto e validade
 - Aprovar orçamento e transformar em serviço
 - Financeiro com entradas, despesas, pendências e baixa de pagamento
 - Materiais / estoque com entrada e saída
 - Uso de material do estoque diretamente no serviço
 - Relatórios por período + exportação CSV
-- Backup do banco de dados
+- Backup completo em ZIP com banco de dados, fotos e assinaturas
 - Layout responsivo para celular
 - Primeiro acesso cria usuário e senha
 - Dockerfile e `docker-compose.yaml` prontos para deploy
@@ -68,7 +73,7 @@ Também é possível escolher build por Dockerfile. Nesse caso, **configure um v
 
 ## Backup
 
-No sistema, abra **Configurações → Baixar backup agora**. O arquivo `.db` contém os dados do sistema.
+No sistema, abra **Configurações → Baixar backup agora**. O arquivo `.zip` contém o banco de dados e também as fotos/assinaturas salvas em `/data/uploads`.
 
 ## Observações
 
@@ -84,6 +89,7 @@ Esta versão foi ajustada para uso diário no celular:
 - menu lateral por toque para Orçamentos, Materiais, Relatórios e Configurações;
 - tabelas viram cartões no celular, sem precisar arrastar a tela para os lados;
 - formulários em uma coluna, campos maiores e fonte de 16px para evitar zoom automático;
+- seleção de cliente com busca rápida por nome ou telefone nos serviços, orçamentos, financeiro e tarefas;
 - botões e áreas de toque ampliados;
 - suporte a área segura de iPhone e barra inferior;
 - layout de agenda, cronômetro, financeiro e detalhes pensado para tela estreita;

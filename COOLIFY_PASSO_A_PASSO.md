@@ -37,3 +37,7 @@ No Coolify, associe o domínio ao serviço `guilherme-eletrica` na porta `5000`.
 Dentro do sistema: **Configurações > Baixar backup agora**.
 
 > Importante: se algum dia trocar de servidor, preserve o volume `/data` ou leve o backup `.db` junto.
+
+
+## Fotos e assinaturas
+As fotos e assinaturas ficam dentro de `/data/uploads`. Por isso, mantenha o volume persistente montado em `/data`; assim esses arquivos também sobrevivem aos redeploys.

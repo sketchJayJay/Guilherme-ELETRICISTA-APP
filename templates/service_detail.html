@@ -1,20 +1,272 @@
-{% extends 'base.html' %}{% block content %}
-<div class="detail-hero"><div><h1>{{ service.title }}</h1><div class="detail-meta"><span>👤 {{ service.client.name }}</span><span>📅 {{ service.service_date|datebr }}</span><span>{% if service.all_day %}🕘 Sem horário definido{% else %}🕘 {{ service.service_time|timebr }}{% endif %}</span><span class="badge {{ service.status }}">{{ status_labels[service.status] }}</span></div><div style="margin-top:12px" class="kpi-mini"><div><small>Total</small><strong>{{ service.total_value|money }}</strong></div><div><small>Recebido</small><strong>{{ service.amount_paid|money }}</strong></div><div><small>Pagamento</small><strong>{{ payment_labels[service.payment_status] }}</strong></div></div></div>
-<div class="timer-box"><div class="muted">Cronômetro de trabalho</div><div id="timerDisplay" class="timer-display" data-seconds="{{ elapsed }}">{{ elapsed|duration }}</div>{% if service.charge_type=='hourly' %}<div class="timer-value" id="hourlyValue">{{ service.hourly_calculated_value()|money }}</div><div class="muted">{{ service.hourly_rate|money }}/hora</div>{% endif %}<div class="actions" style="justify-content:center;margin-top:10px">{% if service.timer_running %}<form method="post" action="{{ url_for('timer_pause', service_id=service.id) }}"><button class="btn primary" type="submit">⏸ Pausar</button></form>{% else %}<form method="post" action="{{ url_for('timer_start', service_id=service.id) }}"><button class="btn success" type="submit">▶ Iniciar</button></form>{% endif %}<form method="post" action="{{ url_for('timer_reset', service_id=service.id) }}" onsubmit="return confirmDelete('Zerar todo o tempo registrado?')"><button class="btn sm danger" type="submit">Zerar</button></form></div></div></div>
-<div class="actions no-print" style="margin-bottom:18px"><a class="btn" href="{{ url_for('service_edit', service_id=service.id) }}">Editar</a><a class="btn" target="_blank" href="{{ url_for('service_print', service_id=service.id) }}">🖨 OS / imprimir</a>{% if service.client.phone %}<a class="btn success" target="_blank" href="https://wa.me/{{ service.client.phone|wa }}?text={{ ('Olá, '+service.client.name+'! Sobre o serviço '+service.title+' do dia '+(service.service_date|datebr)+'.')|urlencode }}">WhatsApp</a>{% endif %}</div>
-<div class="two-col">
-<div class="grid">
-<div class="card"><div class="card-head"><h2>Detalhes do serviço</h2></div><div class="card-body"><p><strong>Local:</strong><br>{{ service.address or service.client.address or 'Não informado' }}</p><p><strong>Descrição:</strong><br>{{ service.description or 'Sem descrição.' }}</p><p><strong>Observações:</strong><br>{{ service.notes or 'Sem observações.' }}</p><div class="actions no-print">{% for k,v in status_labels.items() %}{% if k!=service.status %}<form method="post" action="{{ url_for('service_status', service_id=service.id) }}"><input type="hidden" name="status" value="{{ k }}"><button class="btn sm" type="submit">{{ v }}</button></form>{% endif %}{% endfor %}</div></div></div>
-<div class="card"><div class="card-head"><h2>Materiais usados</h2></div><div class="card-body"><div class="list">{% for item in service.service_materials %}<div class="service-row"><div><div class="row-title">{{ item.description }}</div><div class="row-sub">{{ item.qty }} {{ item.unit }} × {{ item.unit_price|money }}</div></div><div class="row-side"><strong>{{ item.subtotal|money }}</strong><form method="post" action="{{ url_for('service_material_delete', service_id=service.id, item_id=item.id) }}" onsubmit="return confirmDelete('Remover este material?')"><button class="btn sm danger" type="submit">Remover</button></form></div></div>{% else %}<div class="empty">Nenhum material lançado.</div>{% endfor %}</div><hr style="border:0;border-top:1px solid var(--line);margin:18px 0"><form method="post" action="{{ url_for('service_material_add', service_id=service.id) }}" class="form-grid"><div class="field full"><label>Material do estoque (opcional)</label><select class="select" name="material_id" id="materialSelect" onchange="fillMaterial()"><option value="">Item avulso</option>{% for m in materials %}<option value="{{ m.id }}" data-name="{{ m.name }}" data-unit="{{ m.unit }}" data-price="{{ m.sale_price or m.unit_cost }}">{{ m.name }} · estoque {{ m.stock_qty }} {{ m.unit }}</option>{% endfor %}</select></div><div class="field"><label>Descrição</label><input class="input" id="matDesc" name="description"></div><div class="field"><label>Quantidade</label><input class="input" name="qty" value="1" inputmode="decimal"></div><div class="field"><label>Unidade</label><input class="input" id="matUnit" name="unit" value="un"></div><div class="field"><label>Preço unitário</label><input class="input" id="matPrice" name="unit_price" inputmode="decimal"></div><div class="field full"><button class="btn" type="submit">+ Adicionar material</button></div></form></div></div>
+{% extends 'base.html' %}
+{% block content %}
+<div class="detail-hero">
+  <div>
+    <h1>{{ service.title }}</h1>
+    <div class="detail-meta">
+      <span>👤 {{ service.client.name }}</span>
+      <span>📅 {{ service.service_date|datebr }}</span>
+      <span>{% if service.all_day %}🕘 Sem horário definido{% else %}🕘 {{ service.service_time|timebr }}{% endif %}</span>
+      <span class="badge {{ service.status }}">{{ status_labels[service.status] }}</span>
+    </div>
+    <div style="margin-top:12px" class="kpi-mini">
+      <div><small>Total</small><strong>{{ service.total_value|money }}</strong></div>
+      <div><small>Recebido</small><strong>{{ service.amount_paid|money }}</strong></div>
+      <div><small>Lucro estimado</small><strong class="{{ 'profit-positive' if profit>=0 else 'profit-negative' }}">{{ profit|money }}</strong></div>
+    </div>
+  </div>
+  <div class="timer-box">
+    <div class="muted">Cronômetro de trabalho</div>
+    <div id="timerDisplay" class="timer-display" data-seconds="{{ elapsed }}">{{ elapsed|duration }}</div>
+    {% if service.charge_type=='hourly' %}
+      <div class="timer-value" id="hourlyValue">{{ service.hourly_calculated_value()|money }}</div>
+      <div class="muted">{{ service.hourly_rate|money }}/hora</div>
+    {% endif %}
+    <div class="actions" style="justify-content:center;margin-top:10px">
+      {% if service.timer_running %}
+      <form method="post" action="{{ url_for('timer_pause', service_id=service.id) }}"><button class="btn primary" type="submit">⏸ Pausar</button></form>
+      {% else %}
+      <form method="post" action="{{ url_for('timer_start', service_id=service.id) }}"><button class="btn success" type="submit">▶ Iniciar</button></form>
+      {% endif %}
+      <form method="post" action="{{ url_for('timer_reset', service_id=service.id) }}" onsubmit="return confirmDelete('Zerar todo o tempo registrado?')"><button class="btn sm danger" type="submit">Zerar</button></form>
+    </div>
+  </div>
 </div>
-<div class="grid">
-<div class="card"><div class="card-head"><h2>Equipe no serviço</h2><a class="btn sm" href="{{ url_for('team_task_new', service_id=service.id, employee_id=(assignments[0].employee_id if assignments else None)) }}">+ Tarefa</a></div><div class="card-body"><div class="list">{% for a in assignments %}<div class="service-row"><div><div class="row-title">🧰 {{ a.employee.name }}</div><div class="row-sub">Ajudante responsável neste serviço</div></div><a class="btn sm" href="{{ url_for('employee_detail', employee_id=a.employee.id) }}">Equipe</a></div>{% else %}<div class="empty">Nenhum ajudante atribuído. Edite o serviço para escolher um responsável.</div>{% endfor %}</div>{% if helper_expenses %}<hr style="border:0;border-top:1px solid var(--line);margin:14px 0"><div class="service-row"><span>Custos da equipe lançados</span><strong>{{ helper_cost|money }}</strong></div>{% endif %}</div></div>
-<div class="card"><div class="card-head"><h2>Valores</h2></div><div class="card-body"><div class="list"><div class="service-row"><span>Mão de obra</span><strong>{{ service.labor_value|money }}</strong></div><div class="service-row"><span>Materiais</span><strong>{{ service.material_value|money }}</strong></div><div class="service-row"><span>Desconto</span><strong>- {{ service.discount|money }}</strong></div><div class="service-row"><span>Total</span><strong style="font-size:20px">{{ service.total_value|money }}</strong></div></div></div></div>
-<div class="card"><div class="card-head"><h2>Recebimento</h2><span class="badge {{ service.payment_status }}">{{ payment_labels[service.payment_status] }}</span></div><div class="card-body"><p class="muted">Falta receber <strong style="color:var(--text)">{{ (service.total_value-service.amount_paid)|money }}</strong></p>{% if service.payment_status!='paid' %}<form method="post" action="{{ url_for('service_payment', service_id=service.id) }}" class="form-grid"><div class="field"><label>Valor recebido agora</label><input class="input" name="amount" inputmode="decimal" required></div><div class="field"><label>Forma</label><select class="select" name="payment_method"><option>Pix</option><option>Dinheiro</option><option>Cartão</option><option>Transferência</option><option>Boleto</option></select></div><div class="field full"><button class="btn success" type="submit">Registrar recebimento</button></div></form>{% else %}<div class="empty" style="color:#8ef0c1">✓ Serviço totalmente recebido</div>{% endif %}</div></div>
-<div class="card"><div class="card-head"><h2>Cliente</h2></div><div class="card-body"><p><strong>{{ service.client.name }}</strong><br><span class="muted">{{ service.client.phone or 'Sem telefone' }}</span></p><p class="muted">{{ service.client.address or 'Sem endereço cadastrado' }}</p><a class="btn sm" href="{{ url_for('client_detail', client_id=service.client.id) }}">Ver cliente</a></div></div>
-</div></div>
-<div class="actions no-print" style="margin-top:18px"><form method="post" action="{{ url_for('service_delete', service_id=service.id) }}" onsubmit="return confirmDelete('Excluir definitivamente este serviço?')"><button class="btn danger" type="submit">Excluir serviço</button></form></div>
-{% endblock %}{% block scripts %}<script>
-const running={{ 'true' if service.timer_running else 'false' }};let seconds={{ elapsed }};const rate={{ service.hourly_rate or 0 }};function tick(){if(!running)return;seconds++;document.getElementById('timerDisplay').textContent=formatDuration(seconds);const hv=document.getElementById('hourlyValue');if(hv)hv.textContent=moneyBR((seconds/3600)*rate)}if(running)setInterval(tick,1000);
-function fillMaterial(){let s=document.getElementById('materialSelect'),o=s.options[s.selectedIndex];if(!o.value)return;document.getElementById('matDesc').value=o.dataset.name||'';document.getElementById('matUnit').value=o.dataset.unit||'un';document.getElementById('matPrice').value=o.dataset.price||''}
-</script>{% endblock %}
+
+<div class="actions no-print" style="margin-bottom:18px">
+  <a class="btn" href="{{ url_for('service_edit', service_id=service.id) }}">✏️ Editar</a>
+  {% set map_address = service.address or service.client.address %}
+  {% if map_address %}<a class="btn maps-btn" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query={{ map_address|urlencode }}">📍 Abrir no Maps</a>{% endif %}
+  <a class="btn" target="_blank" href="{{ url_for('service_print', service_id=service.id) }}">🖨 OS / imprimir</a>
+  {% if service.client.phone %}<a class="btn success" target="_blank" href="https://wa.me/{{ service.client.phone|wa }}?text={{ ('Olá, '+service.client.name+'! Sobre o serviço '+service.title+' do dia '+(service.service_date|datebr)+'.')|urlencode }}">WhatsApp</a>{% endif %}
+  <form method="post" action="{{ url_for('service_delete', service_id=service.id) }}" onsubmit="return confirmDelete('Excluir definitivamente este serviço?')"><button class="btn danger" type="submit">🗑 Excluir</button></form>
+</div>
+
+<div class="two-col">
+  <div class="grid">
+    <div class="card">
+      <div class="card-head"><h2>Detalhes do serviço</h2></div>
+      <div class="card-body">
+        <p><strong>Local:</strong><br>{{ map_address or 'Não informado' }}</p>
+        {% if map_address %}<p><a class="btn sm maps-btn" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query={{ map_address|urlencode }}">📍 Navegar até o endereço</a></p>{% endif %}
+        <p><strong>Descrição:</strong><br>{{ service.description or 'Sem descrição adicional.' }}</p>
+        <p><strong>Observações:</strong><br>{{ service.notes or 'Sem observações.' }}</p>
+        <div class="actions no-print">
+          {% for k,v in status_labels.items() %}{% if k!=service.status %}
+          <form method="post" action="{{ url_for('service_status', service_id=service.id) }}"><input type="hidden" name="status" value="{{ k }}"><button class="btn sm" type="submit">{{ v }}</button></form>
+          {% endif %}{% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="fotos">
+      <div class="card-head"><h2>📷 Fotos antes e depois</h2></div>
+      <div class="card-body">
+        <div class="photo-columns">
+          <section class="photo-section">
+            <h3>Antes do serviço</h3>
+            <div class="photo-grid">
+              {% for photo in before_photos %}
+              <div class="photo-card">
+                <a target="_blank" href="{{ url_for('uploaded_media', filename=photo.filename) }}"><img src="{{ url_for('uploaded_media', filename=photo.filename) }}" alt="Foto antes"></a>
+                <form class="photo-delete" method="post" action="{{ url_for('service_photo_delete', service_id=service.id, photo_id=photo.id) }}" onsubmit="return confirmDelete('Excluir esta foto?')"><button class="btn danger sm" type="submit">×</button></form>
+              </div>
+              {% else %}<div class="empty" style="grid-column:1/-1">Nenhuma foto antes.</div>{% endfor %}
+            </div>
+            <form method="post" enctype="multipart/form-data" action="{{ url_for('service_photo_add', service_id=service.id) }}" class="upload-inline">
+              <input type="hidden" name="kind" value="before">
+              <div class="field"><label>Adicionar foto</label><input class="input camera-input" type="file" name="photos" accept="image/*" capture="environment" multiple></div>
+              <button class="btn" type="submit">Enviar</button>
+            </form>
+          </section>
+
+          <section class="photo-section">
+            <h3>Depois do serviço</h3>
+            <div class="photo-grid">
+              {% for photo in after_photos %}
+              <div class="photo-card">
+                <a target="_blank" href="{{ url_for('uploaded_media', filename=photo.filename) }}"><img src="{{ url_for('uploaded_media', filename=photo.filename) }}" alt="Foto depois"></a>
+                <form class="photo-delete" method="post" action="{{ url_for('service_photo_delete', service_id=service.id, photo_id=photo.id) }}" onsubmit="return confirmDelete('Excluir esta foto?')"><button class="btn danger sm" type="submit">×</button></form>
+              </div>
+              {% else %}<div class="empty" style="grid-column:1/-1">Nenhuma foto depois.</div>{% endfor %}
+            </div>
+            <form method="post" enctype="multipart/form-data" action="{{ url_for('service_photo_add', service_id=service.id) }}" class="upload-inline">
+              <input type="hidden" name="kind" value="after">
+              <div class="field"><label>Adicionar foto</label><input class="input camera-input" type="file" name="photos" accept="image/*" capture="environment" multiple></div>
+              <button class="btn" type="submit">Enviar</button>
+            </form>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Materiais usados</h2></div>
+      <div class="card-body">
+        <div class="list">
+          {% for item in service.service_materials %}
+          <div class="service-row">
+            <div>
+              <div class="row-title">{{ item.description }}</div>
+              <div class="row-sub">{{ item.qty }} {{ item.unit }} × {{ item.unit_price|money }} cobrado</div>
+            </div>
+            <div class="row-side">
+              <strong>{{ item.subtotal|money }}</strong>
+              <form method="post" action="{{ url_for('service_material_delete', service_id=service.id, item_id=item.id) }}" onsubmit="return confirmDelete('Remover este material?')"><button class="btn sm danger" type="submit">Remover</button></form>
+            </div>
+          </div>
+          {% else %}<div class="empty">Nenhum material lançado.</div>{% endfor %}
+        </div>
+        <hr style="border:0;border-top:1px solid var(--line);margin:18px 0">
+        <form method="post" action="{{ url_for('service_material_add', service_id=service.id) }}" class="form-grid">
+          <div class="field full">
+            <label>Material do estoque (opcional)</label>
+            <select class="select" name="material_id" id="materialSelect" onchange="fillMaterial()">
+              <option value="">Item avulso</option>
+              {% for m in materials %}<option value="{{ m.id }}" data-name="{{ m.name }}" data-unit="{{ m.unit }}" data-price="{{ m.sale_price or m.unit_cost }}" data-cost="{{ m.unit_cost or 0 }}">{{ m.name }} · estoque {{ m.stock_qty }} {{ m.unit }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="field"><label>Descrição</label><input class="input" id="matDesc" name="description"></div>
+          <div class="field"><label>Quantidade</label><input class="input" name="qty" value="1" inputmode="decimal"></div>
+          <div class="field"><label>Unidade</label><input class="input" id="matUnit" name="unit" value="un"></div>
+          <div class="field"><label>Preço cobrado / un.</label><input class="input" id="matPrice" name="unit_price" inputmode="decimal"></div>
+          <div class="field"><label>Custo real / un.</label><input class="input" id="matCost" name="unit_cost" inputmode="decimal"><div class="help">Usado no cálculo de lucro.</div></div>
+          <div class="field full"><button class="btn" type="submit">+ Adicionar material</button></div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card" id="assinatura">
+      <div class="card-head"><h2>✍️ Assinatura do cliente</h2></div>
+      <div class="card-body signature-wrap">
+        {% if service.signature %}
+        <div class="signature-saved">
+          <img src="{{ url_for('uploaded_media', filename=service.signature.filename) }}" alt="Assinatura do cliente">
+        </div>
+        <div class="signature-meta">Assinado por <strong>{{ service.signature.signer_name or service.client.name }}</strong> em {{ service.signature.signed_at.strftime('%d/%m/%Y %H:%M') }}.</div>
+        <form method="post" action="{{ url_for('service_signature_delete', service_id=service.id) }}" onsubmit="return confirmDelete('Remover a assinatura salva?')"><button class="btn sm danger" type="submit">Remover assinatura</button></form>
+        <hr style="border:0;border-top:1px solid var(--line);margin:6px 0">
+        <div class="muted">Para substituir, faça uma nova assinatura abaixo e salve.</div>
+        {% else %}
+        <div class="muted">O cliente pode assinar com o dedo direto na tela do celular.</div>
+        {% endif %}
+        <form method="post" action="{{ url_for('service_signature_save', service_id=service.id) }}" id="signatureForm">
+          <div class="field"><label>Nome de quem está assinando</label><input class="input" name="signer_name" value="{{ service.client.name }}"></div>
+          <div class="signature-canvas-wrap"><canvas id="signatureCanvas" class="signature-canvas"></canvas></div>
+          <input type="hidden" name="signature_data" id="signatureData">
+          <div class="actions"><button class="btn" type="button" id="clearSignature">Limpar</button><button class="btn primary" type="submit">Salvar assinatura</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-head"><h2>Equipe no serviço</h2><a class="btn sm" href="{{ url_for('team_task_new', service_id=service.id, employee_id=(assignments[0].employee_id if assignments else None)) }}">+ Tarefa</a></div>
+      <div class="card-body">
+        <div class="list">
+          {% for a in assignments %}
+          <div class="service-row"><div><div class="row-title">🧰 {{ a.employee.name }}</div><div class="row-sub">Ajudante responsável neste serviço</div></div><a class="btn sm" href="{{ url_for('employee_detail', employee_id=a.employee.id) }}">Equipe</a></div>
+          {% else %}<div class="empty">Nenhum ajudante atribuído. Edite o serviço para escolher um responsável.</div>{% endfor %}
+        </div>
+        {% if helper_expenses %}<hr style="border:0;border-top:1px solid var(--line);margin:14px 0"><div class="service-row"><span>Custos da equipe</span><strong>{{ helper_cost|money }}</strong></div>{% endif %}
+      </div>
+    </div>
+
+    <div class="card" id="lucro">
+      <div class="card-head"><h2>💰 Lucro real do serviço</h2></div>
+      <div class="card-body">
+        <div class="profit-grid">
+          <div class="profit-kpi"><small>Valor cobrado</small><strong>{{ service.total_value|money }}</strong></div>
+          <div class="profit-kpi"><small>Custo materiais</small><strong>{{ material_cost|money }}</strong></div>
+          <div class="profit-kpi"><small>Outros custos</small><strong>{{ linked_expenses|money }}</strong></div>
+          <div class="profit-kpi"><small>Lucro</small><strong class="{{ 'profit-positive' if profit>=0 else 'profit-negative' }}">{{ profit|money }}</strong></div>
+        </div>
+        <div class="help" style="margin-top:10px">Lucro = valor do serviço − custo real dos materiais − ajudante/combustível/outros gastos vinculados.</div>
+
+        {% if other_expenses %}
+        <div class="cost-list list">
+          {% for e in other_expenses %}
+          <div class="finance-row">
+            <div class="row-main"><div class="row-title">{{ e.description }}</div><div class="row-sub">{{ e.due_date|datebr }} · {{ e.category }}</div></div>
+            <div class="actions"><strong>{{ e.amount|money }}</strong><form method="post" action="{{ url_for('service_cost_delete', service_id=service.id, entry_id=e.id) }}" onsubmit="return confirmDelete('Excluir este custo do serviço e do financeiro?')"><button class="btn sm danger" type="submit">Excluir</button></form></div>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <details class="more-options" style="margin-top:12px">
+          <summary>+ Lançar custo do serviço <span>combustível, compra externa, estacionamento...</span></summary>
+          <form method="post" action="{{ url_for('service_cost_add', service_id=service.id) }}" class="form-grid more-options-body">
+            <div class="field"><label>Categoria</label><select class="select" name="cost_category"><option>Combustível</option><option>Material externo</option><option>Alimentação</option><option>Pedágio / estacionamento</option><option>Ferramenta / aluguel</option><option>Outro</option></select></div>
+            <div class="field"><label>Valor</label><input class="input" name="amount" inputmode="decimal" required></div>
+            <div class="field full"><label>Descrição</label><input class="input" name="description" placeholder="Ex.: gasolina para ir até a obra"></div>
+            <div class="field"><label>Data</label><input class="input" type="date" name="cost_date" value="{{ today.isoformat() }}"></div>
+            <div class="field"><label>Situação</label><select class="select" name="status"><option value="paid">Pago</option><option value="pending">A pagar</option></select></div>
+            <div class="field full"><button class="btn primary" type="submit">Lançar custo</button></div>
+          </form>
+        </details>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Valores cobrados</h2></div>
+      <div class="card-body"><div class="list"><div class="service-row"><span>Mão de obra</span><strong>{{ service.labor_value|money }}</strong></div><div class="service-row"><span>Materiais</span><strong>{{ service.material_value|money }}</strong></div><div class="service-row"><span>Desconto</span><strong>- {{ service.discount|money }}</strong></div><div class="service-row"><span>Total</span><strong style="font-size:20px">{{ service.total_value|money }}</strong></div></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Recebimento</h2><span class="badge {{ service.payment_status }}">{{ payment_labels[service.payment_status] }}</span></div>
+      <div class="card-body">
+        <p class="muted">Falta receber <strong style="color:var(--text)">{{ (service.total_value-service.amount_paid)|money }}</strong></p>
+        {% if service.payment_status!='paid' %}
+        <form method="post" action="{{ url_for('service_payment', service_id=service.id) }}" class="form-grid">
+          <div class="field"><label>Valor recebido agora</label><input class="input" name="amount" inputmode="decimal" required></div>
+          <div class="field"><label>Forma</label><select class="select" name="payment_method"><option>Pix</option><option>Dinheiro</option><option>Cartão</option><option>Transferência</option><option>Boleto</option></select></div>
+          <div class="field full"><button class="btn success" type="submit">Registrar recebimento</button></div>
+        </form>
+        {% else %}<div class="empty" style="color:#8ef0c1">✓ Serviço totalmente recebido</div>{% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Cliente</h2></div>
+      <div class="card-body">
+        <p><strong>{{ service.client.name }}</strong><br><span class="muted">{{ service.client.phone or 'Sem telefone' }}</span></p>
+        <p class="muted">{{ service.client.address or 'Sem endereço cadastrado' }}</p>
+        <div class="actions"><a class="btn sm" href="{{ url_for('client_detail', client_id=service.client.id) }}">Ver cliente</a>{% if service.client.address %}<a class="btn sm maps-btn" target="_blank" href="https://www.google.com/maps/search/?api=1&query={{ service.client.address|urlencode }}">Maps</a>{% endif %}</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const running={{ 'true' if service.timer_running else 'false' }};let seconds={{ elapsed }};const rate={{ service.hourly_rate or 0 }};
+function tick(){if(!running)return;seconds++;document.getElementById('timerDisplay').textContent=formatDuration(seconds);const hv=document.getElementById('hourlyValue');if(hv)hv.textContent=moneyBR((seconds/3600)*rate)}if(running)setInterval(tick,1000);
+function fillMaterial(){let s=document.getElementById('materialSelect'),o=s.options[s.selectedIndex];if(!o.value)return;document.getElementById('matDesc').value=o.dataset.name||'';document.getElementById('matUnit').value=o.dataset.unit||'un';document.getElementById('matPrice').value=o.dataset.price||'';document.getElementById('matCost').value=o.dataset.cost||''}
+
+(function initSignature(){
+  const canvas=document.getElementById('signatureCanvas');
+  if(!canvas)return;
+  const ctx=canvas.getContext('2d'); let drawing=false; let dirty=false;
+  function resize(){
+    const ratio=Math.max(window.devicePixelRatio||1,1); const rect=canvas.getBoundingClientRect();
+    const old=dirty?canvas.toDataURL():null;
+    canvas.width=Math.max(1,Math.floor(rect.width*ratio));canvas.height=Math.max(1,Math.floor(rect.height*ratio));
+    ctx.setTransform(ratio,0,0,ratio,0,0);ctx.lineWidth=2.4;ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#111';
+    if(old){const img=new Image();img.onload=()=>ctx.drawImage(img,0,0,rect.width,rect.height);img.src=old;}
+  }
+  function point(e){const r=canvas.getBoundingClientRect();const t=e.touches?e.touches[0]:e;return{x:t.clientX-r.left,y:t.clientY-r.top}}
+  function start(e){e.preventDefault();drawing=true;dirty=true;const p=point(e);ctx.beginPath();ctx.moveTo(p.x,p.y)}
+  function move(e){if(!drawing)return;e.preventDefault();const p=point(e);ctx.lineTo(p.x,p.y);ctx.stroke()}
+  function end(e){if(!drawing)return;if(e)e.preventDefault();drawing=false;ctx.closePath()}
+  ['mousedown','touchstart'].forEach(x=>canvas.addEventListener(x,start,{passive:false}));
+  ['mousemove','touchmove'].forEach(x=>canvas.addEventListener(x,move,{passive:false}));
+  ['mouseup','mouseleave','touchend','touchcancel'].forEach(x=>canvas.addEventListener(x,end,{passive:false}));
+  document.getElementById('clearSignature').addEventListener('click',()=>{ctx.clearRect(0,0,canvas.width,canvas.height);dirty=false});
+  document.getElementById('signatureForm').addEventListener('submit',e=>{if(!dirty){e.preventDefault();alert('Faça a assinatura antes de salvar.');return;}document.getElementById('signatureData').value=canvas.toDataURL('image/png')});
+  resize(); window.addEventListener('resize',()=>setTimeout(resize,100));
+})();
+</script>
+{% endblock %}

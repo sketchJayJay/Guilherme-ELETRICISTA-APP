@@ -2,17 +2,21 @@ import os
 import io
 import csv
 import shutil
+import zipfile
+import base64
+import uuid
 from datetime import datetime, date, timedelta
 from functools import wraps
 from decimal import Decimal, InvalidOperation
 
 from flask import (
     Flask, render_template, request, redirect, url_for, flash,
-    session, send_file, jsonify, abort
+    session, send_file, send_from_directory, jsonify, abort
 )
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func, or_
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DATA_DIR = os.getenv("DATA_DIR", os.path.join(BASE_DIR, "data"))
@@ -24,6 +28,9 @@ app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "troque-esta-chave-em-produca
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + DB_PATH
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
+UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "heic"}
 
 db = SQLAlchemy(app)
 
@@ -206,6 +213,33 @@ class ServiceMaterial(db.Model):
         return Decimal(self.qty or 0) * Decimal(self.unit_price or 0)
 
 
+class ServiceMaterialCost(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    service_material_id = db.Column(db.Integer, db.ForeignKey("service_material.id"), nullable=False, unique=True, index=True)
+    unit_cost = db.Column(db.Numeric(12, 2), default=0)
+    service_material = db.relationship("ServiceMaterial", backref=db.backref("cost_snapshot", uselist=False, cascade="all, delete-orphan"))
+
+
+class ServicePhoto(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    service_id = db.Column(db.Integer, db.ForeignKey("service.id"), nullable=False, index=True)
+    kind = db.Column(db.String(20), default="before", index=True)  # before/after
+    filename = db.Column(db.String(255), nullable=False)
+    original_name = db.Column(db.String(255), default="")
+    caption = db.Column(db.String(255), default="")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    service = db.relationship("Service", backref=db.backref("photos", cascade="all, delete-orphan", lazy=True))
+
+
+class ServiceSignature(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    service_id = db.Column(db.Integer, db.ForeignKey("service.id"), nullable=False, unique=True, index=True)
+    filename = db.Column(db.String(255), nullable=False)
+    signer_name = db.Column(db.String(140), default="")
+    signed_at = db.Column(db.DateTime, default=datetime.utcnow)
+    service = db.relationship("Service", backref=db.backref("signature", uselist=False, cascade="all, delete-orphan"))
+
+
 class Employee(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(140), nullable=False, index=True)
@@ -321,6 +355,58 @@ def parse_time(v):
 
 def phone_digits(phone):
     return "".join(ch for ch in (phone or "") if ch.isdigit())
+
+
+def allowed_image(filename):
+    return "." in (filename or "") and filename.rsplit(".", 1)[1].lower() in ALLOWED_IMAGE_EXTENSIONS
+
+
+def save_uploaded_image(file_storage, prefix):
+    if not file_storage or not file_storage.filename or not allowed_image(file_storage.filename):
+        return None
+    original = secure_filename(file_storage.filename)
+    ext = original.rsplit(".", 1)[1].lower()
+    name = f"{prefix}_{uuid.uuid4().hex}.{ext}"
+    file_storage.save(os.path.join(UPLOAD_DIR, name))
+    return name, original
+
+
+def delete_upload(filename):
+    if not filename:
+        return
+    path = os.path.join(UPLOAD_DIR, os.path.basename(filename))
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def service_material_cost_total(service):
+    total = Decimal("0")
+    for item in service.service_materials:
+        if item.cost_snapshot:
+            unit_cost = Decimal(item.cost_snapshot.unit_cost or 0)
+        elif item.material:
+            unit_cost = Decimal(item.material.unit_cost or 0)
+        else:
+            unit_cost = Decimal("0")
+        total += Decimal(item.qty or 0) * unit_cost
+    return total
+
+
+def service_expense_total(service_id):
+    return Decimal(db.session.query(func.coalesce(func.sum(FinanceEntry.amount), 0)).filter(
+        FinanceEntry.service_id == service_id, FinanceEntry.type == "expense"
+    ).scalar() or 0)
+
+
+def service_profit(service):
+    material_cost = service_material_cost_total(service)
+    linked_expenses = service_expense_total(service.id)
+    total_cost = material_cost + linked_expenses
+    profit = Decimal(service.total_value or 0) - total_cost
+    return material_cost, linked_expenses, total_cost, profit
 
 
 def duration_text(seconds):
@@ -769,7 +855,20 @@ def service_detail(service_id):
     assignments = ServiceAssignment.query.filter_by(service_id=service.id).all()
     helper_expenses = EmployeeExpense.query.filter_by(service_id=service.id).order_by(EmployeeExpense.expense_date.desc()).all()
     helper_cost = sum((Decimal(x.amount or 0) for x in helper_expenses), Decimal("0"))
-    return render_template("service_detail.html", service=service, materials=materials, elapsed=elapsed, assignments=assignments, helper_expenses=helper_expenses, helper_cost=helper_cost)
+    material_cost, linked_expenses, total_cost, profit = service_profit(service)
+    other_expenses = FinanceEntry.query.filter(
+        FinanceEntry.service_id == service.id,
+        FinanceEntry.type == "expense",
+        FinanceEntry.category != "Equipe / Ajudante"
+    ).order_by(FinanceEntry.due_date.desc(), FinanceEntry.id.desc()).all()
+    before_photos = ServicePhoto.query.filter_by(service_id=service.id, kind="before").order_by(ServicePhoto.created_at.desc()).all()
+    after_photos = ServicePhoto.query.filter_by(service_id=service.id, kind="after").order_by(ServicePhoto.created_at.desc()).all()
+    return render_template(
+        "service_detail.html", service=service, materials=materials, elapsed=elapsed,
+        assignments=assignments, helper_expenses=helper_expenses, helper_cost=helper_cost,
+        material_cost=material_cost, linked_expenses=linked_expenses, total_cost=total_cost, profit=profit,
+        other_expenses=other_expenses, before_photos=before_photos, after_photos=after_photos
+    )
 
 
 @app.route("/services/<int:service_id>/edit", methods=["GET", "POST"])
@@ -779,7 +878,13 @@ def service_edit(service_id):
     clients_list = Client.query.order_by(Client.name).all()
     employees_list = Employee.query.filter_by(active=True).order_by(Employee.name).all()
     if request.method == "POST":
-        service.client_id = request.form.get("client_id", type=int)
+        client_id = request.form.get("client_id", type=int)
+        client = db.session.get(Client, client_id) if client_id else None
+        if not client:
+            flash("Selecione um cliente.", "error")
+            assignment = ServiceAssignment.query.filter_by(service_id=service.id).first()
+            return render_template("service_form.html", service=service, clients=clients_list, employees=employees_list, selected_client=None, selected_date=service.service_date, assigned_employee_id=assignment.employee_id if assignment else None)
+        service.client_id = client.id
         service.title = request.form.get("title", "").strip()
         service.service_date = parse_date(request.form.get("service_date"), service.service_date)
         service.all_day = request.form.get("all_day") == "1"
@@ -819,6 +924,11 @@ def service_delete(service_id):
     EmployeeTask.query.filter_by(service_id=service.id).update({EmployeeTask.service_id: None}, synchronize_session=False)
     EmployeeTimeSession.query.filter_by(service_id=service.id).delete(synchronize_session=False)
     ServiceAssignment.query.filter_by(service_id=service.id).delete(synchronize_session=False)
+    # Remove uploaded photos/signature from disk.
+    for photo in list(service.photos):
+        delete_upload(photo.filename)
+    if service.signature:
+        delete_upload(service.signature.filename)
     # Return linked inventory usage to stock.
     for sm in service.service_materials:
         if sm.material:
@@ -926,12 +1036,16 @@ def service_material_add(service_id):
     if material and Decimal(material.stock_qty or 0) < qty:
         flash("Estoque insuficiente. Ajuste o estoque ou use um item avulso.", "error")
         return redirect(url_for("service_detail", service_id=service.id))
+    unit_cost = decimal_or_zero(request.form.get("unit_cost"))
+    if material and unit_cost <= 0:
+        unit_cost = Decimal(material.unit_cost or 0)
     sm = ServiceMaterial(service_id=service.id, material_id=material.id if material else None, description=description, qty=qty, unit=unit, unit_price=unit_price)
     db.session.add(sm)
+    db.session.flush()
+    db.session.add(ServiceMaterialCost(service_material_id=sm.id, unit_cost=unit_cost))
     if material:
         material.stock_qty = Decimal(material.stock_qty or 0) - qty
         db.session.add(MaterialMovement(material_id=material.id, service_id=service.id, type="out", qty=qty, unit_cost=material.unit_cost, notes=f"Uso no serviço #{service.id}"))
-    db.session.flush()
     sync_service_total(service)
     ensure_income_entry(service)
     db.session.commit()
@@ -954,6 +1068,140 @@ def service_material_delete(service_id, item_id):
     db.session.commit()
     flash("Material removido.", "success")
     return redirect(url_for("service_detail", service_id=service.id))
+
+
+@app.route("/uploads/<path:filename>")
+@login_required
+def uploaded_media(filename):
+    return send_from_directory(UPLOAD_DIR, os.path.basename(filename))
+
+
+@app.route("/services/<int:service_id>/photos/add", methods=["POST"])
+@login_required
+def service_photo_add(service_id):
+    service = Service.query.get_or_404(service_id)
+    kind = request.form.get("kind", "before")
+    if kind not in {"before", "after"}:
+        kind = "before"
+    files = request.files.getlist("photos")
+    saved = 0
+    for file_storage in files:
+        result = save_uploaded_image(file_storage, f"service_{service.id}_{kind}")
+        if not result:
+            continue
+        filename, original = result
+        db.session.add(ServicePhoto(
+            service_id=service.id, kind=kind, filename=filename, original_name=original,
+            caption=request.form.get("caption", "").strip()
+        ))
+        saved += 1
+    if saved:
+        db.session.commit()
+        flash(f"{saved} foto(s) adicionada(s).", "success")
+    else:
+        flash("Escolha uma foto JPG, PNG, WEBP ou HEIC.", "error")
+    return redirect(url_for("service_detail", service_id=service.id) + "#fotos")
+
+
+@app.route("/services/<int:service_id>/photos/<int:photo_id>/delete", methods=["POST"])
+@admin_required
+def service_photo_delete(service_id, photo_id):
+    service = Service.query.get_or_404(service_id)
+    photo = ServicePhoto.query.filter_by(id=photo_id, service_id=service.id).first_or_404()
+    delete_upload(photo.filename)
+    db.session.delete(photo)
+    db.session.commit()
+    flash("Foto removida.", "success")
+    return redirect(url_for("service_detail", service_id=service.id) + "#fotos")
+
+
+@app.route("/services/<int:service_id>/signature/save", methods=["POST"])
+@login_required
+def service_signature_save(service_id):
+    service = Service.query.get_or_404(service_id)
+    data_url = request.form.get("signature_data", "")
+    signer_name = request.form.get("signer_name", "").strip() or service.client.name
+    if not data_url.startswith("data:image/png;base64,"):
+        flash("Faça a assinatura antes de salvar.", "error")
+        return redirect(url_for("service_detail", service_id=service.id) + "#assinatura")
+    try:
+        raw = base64.b64decode(data_url.split(",", 1)[1], validate=True)
+    except Exception:
+        flash("Não foi possível salvar a assinatura.", "error")
+        return redirect(url_for("service_detail", service_id=service.id) + "#assinatura")
+    if len(raw) < 100:
+        flash("A assinatura parece estar vazia.", "error")
+        return redirect(url_for("service_detail", service_id=service.id) + "#assinatura")
+    existing = ServiceSignature.query.filter_by(service_id=service.id).first()
+    if existing:
+        delete_upload(existing.filename)
+        signature = existing
+    else:
+        signature = ServiceSignature(service_id=service.id)
+        db.session.add(signature)
+    filename = f"service_{service.id}_signature_{uuid.uuid4().hex}.png"
+    with open(os.path.join(UPLOAD_DIR, filename), "wb") as f:
+        f.write(raw)
+    signature.filename = filename
+    signature.signer_name = signer_name
+    signature.signed_at = datetime.utcnow()
+    db.session.commit()
+    flash("Assinatura do cliente salva.", "success")
+    return redirect(url_for("service_detail", service_id=service.id) + "#assinatura")
+
+
+@app.route("/services/<int:service_id>/signature/delete", methods=["POST"])
+@admin_required
+def service_signature_delete(service_id):
+    service = Service.query.get_or_404(service_id)
+    signature = ServiceSignature.query.filter_by(service_id=service.id).first()
+    if signature:
+        delete_upload(signature.filename)
+        db.session.delete(signature)
+        db.session.commit()
+        flash("Assinatura removida.", "success")
+    return redirect(url_for("service_detail", service_id=service.id) + "#assinatura")
+
+
+@app.route("/services/<int:service_id>/costs/add", methods=["POST"])
+@admin_required
+def service_cost_add(service_id):
+    service = Service.query.get_or_404(service_id)
+    amount = decimal_or_zero(request.form.get("amount"))
+    if amount <= 0:
+        flash("Informe um custo maior que zero.", "error")
+        return redirect(url_for("service_detail", service_id=service.id) + "#lucro")
+    category_name = request.form.get("cost_category", "Outro").strip() or "Outro"
+    description = request.form.get("description", "").strip() or category_name
+    status = request.form.get("status", "paid")
+    cost_date = parse_date(request.form.get("cost_date"), date.today())
+    entry = FinanceEntry(
+        type="expense", service_id=service.id, client_id=service.client_id,
+        description=f"Custo serviço #{service.id} - {description}",
+        category=f"Custo do serviço / {category_name}", amount=amount, due_date=cost_date,
+        status="paid" if status == "paid" else "pending",
+        paid_date=cost_date if status == "paid" else None,
+        payment_method=request.form.get("payment_method", "").strip(),
+        notes=request.form.get("notes", "").strip()
+    )
+    db.session.add(entry)
+    db.session.commit()
+    flash("Custo lançado no serviço e no financeiro.", "success")
+    return redirect(url_for("service_detail", service_id=service.id) + "#lucro")
+
+
+@app.route("/services/<int:service_id>/costs/<int:entry_id>/delete", methods=["POST"])
+@admin_required
+def service_cost_delete(service_id, entry_id):
+    service = Service.query.get_or_404(service_id)
+    entry = FinanceEntry.query.filter_by(id=entry_id, service_id=service.id, type="expense").first_or_404()
+    if EmployeeExpense.query.filter_by(finance_entry_id=entry.id).first():
+        flash("Esse custo pertence ao ajudante. Exclua pela área da equipe.", "error")
+        return redirect(url_for("service_detail", service_id=service.id) + "#lucro")
+    db.session.delete(entry)
+    db.session.commit()
+    flash("Custo removido do serviço e do financeiro.", "success")
+    return redirect(url_for("service_detail", service_id=service.id) + "#lucro")
 
 
 @app.route("/services/<int:service_id>/print")
@@ -1075,7 +1323,12 @@ def quote_edit(quote_id):
     quote = Quote.query.get_or_404(quote_id)
     clients_list = Client.query.order_by(Client.name).all()
     if request.method == "POST":
-        quote.client_id = request.form.get("client_id", type=int)
+        client_id = request.form.get("client_id", type=int)
+        client = db.session.get(Client, client_id) if client_id else None
+        if not client:
+            flash("Selecione um cliente.", "error")
+            return render_template("quote_form.html", quote=quote, clients=clients_list, selected_client=None)
+        quote.client_id = client_id
         quote.title = request.form.get("title", "").strip()
         quote.quote_date = parse_date(request.form.get("quote_date"), quote.quote_date)
         quote.valid_until = parse_date(request.form.get("valid_until"))
@@ -1797,8 +2050,15 @@ def settings():
 def backup_download():
     db.session.commit()
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    backup_path = os.path.join(DATA_DIR, f"backup_guilherme_eletrica_{stamp}.db")
-    shutil.copy2(DB_PATH, backup_path)
+    backup_path = os.path.join(DATA_DIR, f"backup_guilherme_eletrica_{stamp}.zip")
+    with zipfile.ZipFile(backup_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(DB_PATH, arcname="guilherme_eletrica.db")
+        if os.path.isdir(UPLOAD_DIR):
+            for root, _, files in os.walk(UPLOAD_DIR):
+                for filename in files:
+                    full = os.path.join(root, filename)
+                    rel = os.path.relpath(full, UPLOAD_DIR)
+                    zf.write(full, arcname=os.path.join("uploads", rel))
     return send_file(backup_path, as_attachment=True, download_name=os.path.basename(backup_path))
 
 

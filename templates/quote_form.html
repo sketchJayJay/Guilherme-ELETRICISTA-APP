@@ -1,7 +1,7 @@
 {% extends 'base.html' %}{% block content %}
 <div class="page-head"><div><h1>{{ 'Editar orçamento' if quote else 'Novo orçamento' }}</h1><p>Adicione mão de obra e materiais item por item.</p></div></div>
 <form method="post" class="card"><div class="card-body form-grid">
-<div class="field full"><label>Cliente *</label><select class="select" name="client_id" required><option value="">Selecione...</option>{% for c in clients %}<option value="{{ c.id }}" {% if selected_client==c.id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}</select></div>
+<div class="field full"><label>Cliente *</label><div class="client-picker" data-client-picker><input class="input" type="search" data-client-search autocomplete="off" placeholder="Digite nome ou telefone"><select class="client-source" name="client_id" data-client-select><option value="">Selecione...</option>{% for c in clients %}<option value="{{ c.id }}" data-name="{{ c.name }}" data-phone="{{ c.phone or '' }}" {% if selected_client==c.id %}selected{% endif %}>{{ c.name }}{% if c.phone %} · {{ c.phone }}{% endif %}</option>{% endfor %}</select><div class="client-results" data-client-results></div></div></div>
 <div class="field full"><label>Título *</label><input class="input" name="title" required value="{{ quote.title if quote else '' }}" placeholder="Ex.: instalação elétrica da residência"></div>
 <div class="field"><label>Data</label><input class="input" type="date" name="quote_date" value="{{ (quote.quote_date if quote else today).isoformat() }}"></div>
 <div class="field"><label>Validade</label><input class="input" type="date" name="valid_until" value="{{ quote.valid_until.isoformat() if quote and quote.valid_until else '' }}"></div>
