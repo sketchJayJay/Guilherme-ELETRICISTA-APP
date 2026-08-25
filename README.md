@@ -76,3 +76,20 @@ No sistema, abra **Configurações → Baixar backup agora**. O arquivo `.db` co
 - WhatsApp abre a conversa do cliente usando o número cadastrado.
 - Para instalações no Brasil, cadastre o telefone com DDD. O botão considera o código do país `55`.
 - O sistema é ideal para um profissional ou pequena equipe usando um único login.
+
+## Uso no smartphone
+Esta versão foi ajustada para uso diário no celular:
+- navegação inferior fixa com Início, Agenda, Novo Serviço, Financeiro e Clientes;
+- botão central de Novo Serviço destacado para uso rápido em campo;
+- menu lateral por toque para Orçamentos, Materiais, Relatórios e Configurações;
+- tabelas viram cartões no celular, sem precisar arrastar a tela para os lados;
+- formulários em uma coluna, campos maiores e fonte de 16px para evitar zoom automático;
+- botões e áreas de toque ampliados;
+- suporte a área segura de iPhone e barra inferior;
+- layout de agenda, cronômetro, financeiro e detalhes pensado para tela estreita;
+- manifest e ícones para adicionar o sistema à tela inicial do celular.
+
+### Adicionar à tela inicial
+**Android / Chrome:** abra o sistema, toque no menu do navegador e escolha **Adicionar à tela inicial** ou **Instalar app**.
+
+**iPhone / Safari:** abra o sistema, toque em **Compartilhar** e depois em **Adicionar à Tela de Início**.
