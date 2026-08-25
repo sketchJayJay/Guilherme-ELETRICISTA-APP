@@ -9,5 +9,5 @@
 <div class="field full"><label>Endereço</label><input class="input" name="address" value="{{ client.address if client else '' }}"></div>
 <div class="field full"><label>Referência / localização</label><input class="input" name="reference" placeholder="Ex.: casa azul ao lado do mercado" value="{{ client.reference if client else '' }}"></div>
 <div class="field full"><label>Observações</label><textarea class="textarea" name="notes">{{ client.notes if client else '' }}</textarea></div>
-<div class="field full"><div class="actions"><button class="btn primary" type="submit">Salvar cliente</button><a class="btn" href="{{ url_for('clients') }}">Cancelar</a></div></div>
+<div class="field full"><div class="actions"><button class="btn primary" type="submit">Salvar cliente</button><a class="btn" href="{{ url_for('clients') }}">Cancelar</a>{% if client and client.id %}<button class="btn danger" type="submit" formnovalidate formaction="{{ url_for('client_delete', client_id=client.id) }}" formmethod="post" onclick="return confirmDelete('Excluir este cliente? Se houver serviços ou orçamentos, o histórico será protegido.')">Excluir cliente</button>{% endif %}</div></div>
 </div></form>{% endblock %}

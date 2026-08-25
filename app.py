@@ -659,13 +659,14 @@ def client_edit(client_id):
 
 
 @app.route("/clients/<int:client_id>/delete", methods=["POST"])
-@login_required
+@admin_required
 def client_delete(client_id):
     client = Client.query.get_or_404(client_id)
     if client.services or client.quotes:
-        flash("Não é possível excluir um cliente com serviços ou orçamentos. Você pode editar os dados dele.", "error")
+        flash("Esse cliente possui serviços ou orçamentos. Exclua primeiro esses registros para evitar apagar o histórico por engano.", "error")
         return redirect(url_for("client_detail", client_id=client.id))
-    FinanceEntry.query.filter_by(client_id=client.id).update({FinanceEntry.client_id: None})
+    FinanceEntry.query.filter_by(client_id=client.id).update({FinanceEntry.client_id: None}, synchronize_session=False)
+    EmployeeTask.query.filter_by(client_id=client.id).update({EmployeeTask.client_id: None}, synchronize_session=False)
     db.session.delete(client)
     db.session.commit()
     flash("Cliente excluído.", "success")
@@ -809,7 +810,7 @@ def service_edit(service_id):
 
 
 @app.route("/services/<int:service_id>/delete", methods=["POST"])
-@login_required
+@admin_required
 def service_delete(service_id):
     service = Service.query.get_or_404(service_id)
     FinanceEntry.query.filter_by(service_id=service.id, type="income").delete(synchronize_session=False)
@@ -1139,7 +1140,7 @@ def quote_convert(quote_id):
 
 
 @app.route("/quotes/<int:quote_id>/delete", methods=["POST"])
-@login_required
+@admin_required
 def quote_delete(quote_id):
     quote = Quote.query.get_or_404(quote_id)
     db.session.delete(quote)
@@ -1263,7 +1264,7 @@ def finance_toggle(entry_id):
 
 
 @app.route("/finance/<int:entry_id>/delete", methods=["POST"])
-@login_required
+@admin_required
 def finance_delete(entry_id):
     entry = FinanceEntry.query.get_or_404(entry_id)
     team_expense = EmployeeExpense.query.filter_by(finance_entry_id=entry.id).first()
@@ -1358,7 +1359,7 @@ def material_movement(material_id):
 
 
 @app.route("/materials/<int:material_id>/delete", methods=["POST"])
-@login_required
+@admin_required
 def material_delete(material_id):
     material = Material.query.get_or_404(material_id)
     if ServiceMaterial.query.filter_by(material_id=material.id).first():
@@ -1499,6 +1500,21 @@ def employee_edit(employee_id):
         flash("Cadastro da equipe atualizado.", "success")
         return redirect(url_for("employee_detail", employee_id=employee.id))
     return render_template("employee_form.html", employee=employee)
+
+
+@app.route("/team/<int:employee_id>/delete", methods=["POST"])
+@admin_required
+def employee_delete(employee_id):
+    employee = Employee.query.get_or_404(employee_id)
+    # Gastos da equipe geram lançamentos financeiros próprios. Ao excluir um
+    # cadastro feito por engano, removemos também somente esses lançamentos.
+    finance_ids = [x.finance_entry_id for x in employee.expenses if x.finance_entry_id]
+    if finance_ids:
+        FinanceEntry.query.filter(FinanceEntry.id.in_(finance_ids)).delete(synchronize_session=False)
+    db.session.delete(employee)
+    db.session.commit()
+    flash("Ajudante e os registros vinculados a ele foram excluídos.", "success")
+    return redirect(url_for("team"))
 
 
 @app.route("/team/tasks/new", methods=["GET", "POST"])

@@ -2,7 +2,7 @@
 <div class="page-head"><div><h1>Equipe / Ajudantes</h1><p>Serviços, tarefas, horas e gastos de quem trabalha com você.</p></div><div class="actions"><a class="btn" href="{{ url_for('team_task_new') }}">+ Tarefa</a><a class="btn primary" href="{{ url_for('employee_new') }}">+ Ajudante</a></div></div>
 <div class="grid team-cards">
 {% for card in cards %}
-<a class="card team-card {% if not card.employee.active %}team-inactive{% endif %}" href="{{ url_for('employee_detail', employee_id=card.employee.id) }}">
+<div class="card team-card {% if not card.employee.active %}team-inactive{% endif %}">
   <div class="card-body">
     <div class="team-avatar">{{ card.employee.name[:1]|upper }}</div>
     <div class="team-card-main"><h2>{{ card.employee.name }}</h2><div class="muted">{{ pay_type_labels.get(card.employee.pay_type, card.employee.pay_type) }}{% if card.employee.rate %} · {{ card.employee.rate|money }}{% endif %}</div></div>
@@ -13,8 +13,9 @@
       <div><small>Gastos no mês</small><strong>{{ card.month_expenses|money }}</strong></div>
       <div><small>A pagar</small><strong>{{ card.pending_pay|money }}</strong></div>
     </div>
+    <div class="actions" style="margin-top:12px"><a class="btn sm" href="{{ url_for('employee_detail', employee_id=card.employee.id) }}">Abrir</a><a class="btn sm" href="{{ url_for('employee_edit', employee_id=card.employee.id) }}">Editar</a><form method="post" action="{{ url_for('employee_delete', employee_id=card.employee.id) }}" onsubmit="return confirmDelete('Excluir este ajudante? Tarefas, horas e gastos vinculados a ele também serão removidos.')"><button class="btn sm danger" type="submit">Excluir</button></form></div>
   </div>
-</a>
+</div>
 {% else %}<div class="card"><div class="card-body empty">Nenhum ajudante cadastrado ainda.</div></div>{% endfor %}
 </div>
 {% endblock %}

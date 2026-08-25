@@ -111,3 +111,8 @@ A versão atual também atende quando Guilherme trabalha com ajudante:
 - visão rápida da equipe no Dashboard e uma área exclusiva “Equipe / Ajudante”.
 
 O ajudante entra pelo **mesmo link do sistema** com o usuário e senha criados em `Equipe / Ajudante`. O sistema reconhece o perfil e abre apenas a tela **Meu dia**, com tarefas e serviços atribuídos.
+
+
+## Exclusões e correção de cadastros
+
+A interface administrativa possui opção de **Excluir** nos cadastros principais: clientes, serviços, orçamentos, lançamentos financeiros manuais, materiais, ajudantes, tarefas, gastos da equipe e materiais usados em serviços. Todas as exclusões exibem confirmação. Registros que fazem parte de histórico importante recebem proteção: por exemplo, um cliente com serviços/orçamentos precisa ter esse histórico removido primeiro; material já utilizado em serviço também não é apagado diretamente.

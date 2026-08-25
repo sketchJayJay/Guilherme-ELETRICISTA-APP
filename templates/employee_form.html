@@ -10,6 +10,6 @@
 <div class="field"><label>Usuário do ajudante</label><input class="input" name="username" autocomplete="off" value="{{ employee.username if employee and employee.username else '' }}" placeholder="Ex.: joao"></div>
 <div class="field"><label>{{ 'Nova senha' if employee else 'Senha' }}</label><input class="input" type="password" name="password" autocomplete="new-password" placeholder="{{ 'Deixe vazio para manter' if employee else 'Mínimo 4 caracteres' }}"></div>
 <div class="field full"><label>Observações</label><textarea class="textarea" name="notes">{{ employee.notes if employee else '' }}</textarea></div>
-<div class="field full"><div class="actions"><button class="btn primary" type="submit">Salvar ajudante</button><a class="btn" href="{{ url_for('employee_detail', employee_id=employee.id) if employee else url_for('team') }}">Cancelar</a></div></div>
+<div class="field full"><div class="actions"><button class="btn primary" type="submit">Salvar ajudante</button><a class="btn" href="{{ url_for('employee_detail', employee_id=employee.id) if employee else url_for('team') }}">Cancelar</a>{% if employee and employee.id %}<button class="btn danger" type="submit" formnovalidate formaction="{{ url_for('employee_delete', employee_id=employee.id) }}" formmethod="post" onclick="return confirmDelete('Excluir este ajudante? Tarefas, horas e gastos vinculados a ele também serão removidos.')">Excluir ajudante</button>{% endif %}</div></div>
 </div></form>
 {% endblock %}
