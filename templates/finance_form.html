@@ -1,0 +1,15 @@
+{% extends 'base.html' %}{% block content %}
+<div class="page-head"><div><h1>{{ 'Editar lançamento' if entry else 'Novo lançamento' }}</h1><p>Registre uma entrada ou uma despesa.</p></div></div>
+<form method="post" class="card"><div class="card-body form-grid">
+<div class="field"><label>Tipo</label><select class="select" name="type"><option value="income" {% if entry and entry.type=='income' %}selected{% endif %}>Entrada</option><option value="expense" {% if not entry or entry.type=='expense' %}selected{% endif %}>Despesa</option></select></div>
+<div class="field"><label>Status</label><select class="select" name="status"><option value="pending" {% if not entry or entry.status=='pending' %}selected{% endif %}>Pendente</option><option value="paid" {% if entry and entry.status=='paid' %}selected{% endif %}>Pago</option></select></div>
+<div class="field full"><label>Descrição *</label><input class="input" name="description" required value="{{ entry.description if entry else '' }}"></div>
+<div class="field"><label>Categoria</label><input class="input" name="category" placeholder="Ex.: combustível, material, serviço" value="{{ entry.category if entry else '' }}"></div>
+<div class="field"><label>Valor *</label><input class="input" name="amount" inputmode="decimal" required value="{{ entry.amount if entry else '' }}"></div>
+<div class="field"><label>Vencimento / data</label><input class="input" type="date" name="due_date" value="{{ (entry.due_date if entry else today).isoformat() }}"></div>
+<div class="field"><label>Data do pagamento</label><input class="input" type="date" name="paid_date" value="{{ entry.paid_date.isoformat() if entry and entry.paid_date else '' }}"></div>
+<div class="field"><label>Cliente (opcional)</label><select class="select" name="client_id"><option value="">Nenhum</option>{% for c in clients %}<option value="{{ c.id }}" {% if entry and entry.client_id==c.id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}</select></div>
+<div class="field"><label>Forma de pagamento</label><select class="select" name="payment_method"><option value="">Não informado</option>{% for x in ['Pix','Dinheiro','Cartão','Transferência','Boleto'] %}<option {% if entry and entry.payment_method==x %}selected{% endif %}>{{ x }}</option>{% endfor %}</select></div>
+<div class="field full"><label>Observações</label><textarea class="textarea" name="notes">{{ entry.notes if entry else '' }}</textarea></div>
+<div class="field full"><div class="actions"><button class="btn primary" type="submit">Salvar</button><a class="btn" href="{{ url_for('finance') }}">Cancelar</a>{% if entry and not entry.service_id %}<form method="post" action="{{ url_for('finance_delete', entry_id=entry.id) }}" onsubmit="return confirmDelete('Excluir este lançamento?')"><button class="btn danger" type="submit">Excluir</button></form>{% endif %}</div></div>
+</div></form>{% endblock %}

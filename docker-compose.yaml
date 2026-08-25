@@ -1,0 +1,20 @@
+services:
+  guilherme-eletrica:
+    build: .
+    restart: unless-stopped
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-troque-esta-chave}
+      DATA_DIR: /data
+      PORT: 5000
+    volumes:
+      - guilherme_eletrica_data:/data
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+volumes:
+  guilherme_eletrica_data:
