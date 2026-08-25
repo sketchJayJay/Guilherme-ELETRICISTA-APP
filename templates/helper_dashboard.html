@@ -1,0 +1,22 @@
+{% extends 'base.html' %}{% block title %}Meu dia · {{ app_settings.business_name }}{% endblock %}{% block content %}
+<div class="page-head"><div><h1>Meu dia ⚡</h1><p>{{ employee.name }}, aqui estão somente os trabalhos que foram passados para você.</p></div></div>
+<div class="grid stats helper-stats">
+<div class="stat"><div class="label">Tempo hoje</div><div class="value">{{ today_seconds|duration }}</div><div class="foot">Tempo registrado no cronômetro</div></div>
+<div class="stat"><div class="label">Cronômetro</div><div class="value" style="font-size:18px">{{ 'Rodando' if running else 'Parado' }}</div><div class="foot">{{ 'Uma atividade está em andamento' if running else 'Inicie em uma tarefa ou serviço' }}</div></div>
+</div>
+<div class="card helper-running" style="margin-bottom:14px;{% if not running %}display:none{% endif %}">{% if running %}<div class="card-body"><div class="pulse-line"><span class="pulse-dot"></span><strong>Você está trabalhando agora</strong></div><div class="muted" style="margin-top:6px">{% if running.task %}{{ running.task.title }}{% elif running.service %}{{ running.service.title }}{% endif %}</div></div>{% endif %}</div>
+<div class="grid" id="tarefas">
+<div class="page-head compact"><div><h2>Tarefas</h2><p>Conclua ou use o cronômetro quando precisar registrar o tempo.</p></div></div>
+{% for t in tasks %}<div class="card helper-task-card {% if t.task_date==today %}today-card{% endif %}"><div class="card-body">
+<div class="helper-card-top"><div><div class="eyebrow">{{ 'HOJE' if t.task_date==today else t.task_date|datebr }}{% if t.task_time %} · {{ t.task_time|timebr }}{% endif %}</div><h2>{{ t.title }}</h2></div><span class="badge priority-{{ t.priority }}">{{ priority_labels[t.priority] }}</span></div>
+{% if t.client %}<div class="helper-line">👤 {{ t.client.name }}{% if t.client.phone %} · <a href="tel:{{ t.client.phone }}">{{ t.client.phone }}</a>{% endif %}</div>{% endif %}
+{% if t.address %}<div class="helper-line">📍 {{ t.address }}</div>{% endif %}
+{% if t.description %}<div class="helper-note">{{ t.description }}</div>{% endif %}
+<div class="actions helper-actions"><span class="badge task-{{ t.status }}">{{ task_status_labels[t.status] }}</span>{% set trunning = running and running.task_id==t.id %}{% if trunning %}<form method="post" action="{{ url_for('helper_task_timer_pause', task_id=t.id) }}"><button class="btn primary" type="submit">⏸ Pausar</button></form>{% elif t.status!='done' %}<form method="post" action="{{ url_for('helper_task_timer_start', task_id=t.id) }}"><button class="btn success" type="submit">▶ Iniciar</button></form>{% endif %}{% if t.status!='done' %}<form method="post" action="{{ url_for('helper_task_status', task_id=t.id) }}"><input type="hidden" name="status" value="done"><button class="btn" type="submit">✓ Concluir</button></form>{% else %}<form method="post" action="{{ url_for('helper_task_status', task_id=t.id) }}"><input type="hidden" name="status" value="pending"><button class="btn" type="submit">Reabrir</button></form>{% endif %}</div>
+</div></div>{% else %}<div class="card"><div class="card-body empty">Nenhuma tarefa para os próximos dias.</div></div>{% endfor %}
+</div>
+<div class="grid" id="servicos" style="margin-top:20px">
+<div class="page-head compact"><div><h2>Serviços atribuídos</h2><p>Abra para ver cliente, endereço, instruções e registrar seu tempo.</p></div></div>
+{% for a in assignments %}<a class="card helper-service-link" href="{{ url_for('helper_service', service_id=a.service.id) }}"><div class="card-body"><div class="helper-card-top"><div><div class="eyebrow">{{ a.service.service_date|datebr }}{% if not a.service.all_day and a.service.service_time %} · {{ a.service.service_time|timebr }}{% endif %}</div><h2>{{ a.service.title }}</h2><div class="muted">{{ a.service.client.name }}</div></div><span class="badge {{ a.service.status }}">{{ status_labels[a.service.status] }}</span></div></div></a>{% else %}<div class="card"><div class="card-body empty">Nenhum serviço atribuído a você.</div></div>{% endfor %}
+</div>
+{% endblock %}

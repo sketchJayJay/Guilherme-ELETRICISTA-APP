@@ -1,0 +1,20 @@
+{% extends 'base.html' %}{% block title %}Equipe · {{ app_settings.business_name }}{% endblock %}{% block content %}
+<div class="page-head"><div><h1>Equipe / Ajudantes</h1><p>Serviços, tarefas, horas e gastos de quem trabalha com você.</p></div><div class="actions"><a class="btn" href="{{ url_for('team_task_new') }}">+ Tarefa</a><a class="btn primary" href="{{ url_for('employee_new') }}">+ Ajudante</a></div></div>
+<div class="grid team-cards">
+{% for card in cards %}
+<a class="card team-card {% if not card.employee.active %}team-inactive{% endif %}" href="{{ url_for('employee_detail', employee_id=card.employee.id) }}">
+  <div class="card-body">
+    <div class="team-avatar">{{ card.employee.name[:1]|upper }}</div>
+    <div class="team-card-main"><h2>{{ card.employee.name }}</h2><div class="muted">{{ pay_type_labels.get(card.employee.pay_type, card.employee.pay_type) }}{% if card.employee.rate %} · {{ card.employee.rate|money }}{% endif %}</div></div>
+    <span class="badge {{ 'completed' if card.employee.active else 'cancelled' }}">{{ 'Ativo' if card.employee.active else 'Inativo' }}</span>
+    <div class="team-kpis">
+      <div><small>Tarefas pendentes</small><strong>{{ card.pending_tasks }}</strong></div>
+      <div><small>Horas no mês</small><strong>{{ card.seconds|duration }}</strong></div>
+      <div><small>Gastos no mês</small><strong>{{ card.month_expenses|money }}</strong></div>
+      <div><small>A pagar</small><strong>{{ card.pending_pay|money }}</strong></div>
+    </div>
+  </div>
+</a>
+{% else %}<div class="card"><div class="card-body empty">Nenhum ajudante cadastrado ainda.</div></div>{% endfor %}
+</div>
+{% endblock %}

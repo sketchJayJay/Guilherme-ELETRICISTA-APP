@@ -206,6 +206,77 @@ class ServiceMaterial(db.Model):
         return Decimal(self.qty or 0) * Decimal(self.unit_price or 0)
 
 
+class Employee(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(140), nullable=False, index=True)
+    phone = db.Column(db.String(40), default="")
+    active = db.Column(db.Boolean, default=True, index=True)
+    pay_type = db.Column(db.String(20), default="daily")  # daily/hourly/weekly/fixed
+    rate = db.Column(db.Numeric(12, 2), default=0)
+    username = db.Column(db.String(80), unique=True, nullable=True, index=True)
+    password_hash = db.Column(db.String(255), default="")
+    notes = db.Column(db.Text, default="")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    assignments = db.relationship("ServiceAssignment", backref="employee", cascade="all, delete-orphan", lazy=True)
+    tasks = db.relationship("EmployeeTask", backref="employee", cascade="all, delete-orphan", lazy=True)
+    expenses = db.relationship("EmployeeExpense", backref="employee", cascade="all, delete-orphan", lazy=True)
+    time_sessions = db.relationship("EmployeeTimeSession", backref="employee", cascade="all, delete-orphan", lazy=True)
+
+
+class ServiceAssignment(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    service_id = db.Column(db.Integer, db.ForeignKey("service.id"), nullable=False, index=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey("employee.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint("service_id", "employee_id", name="uq_service_employee"),)
+    service = db.relationship("Service")
+
+
+class EmployeeTask(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey("employee.id"), nullable=False, index=True)
+    client_id = db.Column(db.Integer, db.ForeignKey("client.id"), nullable=True, index=True)
+    service_id = db.Column(db.Integer, db.ForeignKey("service.id"), nullable=True, index=True)
+    title = db.Column(db.String(180), nullable=False)
+    task_date = db.Column(db.Date, nullable=False, default=date.today, index=True)
+    task_time = db.Column(db.Time, nullable=True)
+    description = db.Column(db.Text, default="")
+    address = db.Column(db.String(255), default="")
+    priority = db.Column(db.String(20), default="normal")  # low/normal/high
+    status = db.Column(db.String(20), default="pending", index=True)  # pending/in_progress/done/cancelled
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    client = db.relationship("Client")
+    service = db.relationship("Service")
+
+
+class EmployeeExpense(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey("employee.id"), nullable=False, index=True)
+    service_id = db.Column(db.Integer, db.ForeignKey("service.id"), nullable=True, index=True)
+    expense_date = db.Column(db.Date, nullable=False, default=date.today, index=True)
+    category = db.Column(db.String(40), default="daily")  # daily/meal/fuel/advance/payment/other
+    amount = db.Column(db.Numeric(12, 2), nullable=False, default=0)
+    status = db.Column(db.String(20), default="paid", index=True)  # pending/paid
+    notes = db.Column(db.String(255), default="")
+    finance_entry_id = db.Column(db.Integer, db.ForeignKey("finance_entry.id"), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    service = db.relationship("Service")
+    finance_entry = db.relationship("FinanceEntry", foreign_keys=[finance_entry_id])
+
+
+class EmployeeTimeSession(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey("employee.id"), nullable=False, index=True)
+    service_id = db.Column(db.Integer, db.ForeignKey("service.id"), nullable=True, index=True)
+    task_id = db.Column(db.Integer, db.ForeignKey("employee_task.id"), nullable=True, index=True)
+    started_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    ended_at = db.Column(db.DateTime, nullable=True)
+    service = db.relationship("Service")
+    task = db.relationship("EmployeeTask")
+
+
 # -------------------- Helpers --------------------
 def money(v):
     try:
@@ -307,6 +378,15 @@ def get_settings():
     return settings
 
 
+def current_employee():
+    employee_id = session.get("employee_id")
+    return db.session.get(Employee, employee_id) if employee_id else None
+
+
+def is_employee_session():
+    return bool(session.get("employee_id"))
+
+
 @app.context_processor
 def inject_globals():
     return {
@@ -314,12 +394,18 @@ def inject_globals():
         "today": date.today(),
         "now": datetime.now(),
         "timedelta": timedelta,
+        "current_employee": current_employee(),
+        "is_employee": is_employee_session(),
         "status_labels": {
             "scheduled": "Agendado",
             "in_progress": "Em andamento",
             "completed": "Concluído",
             "cancelled": "Cancelado",
         },
+        "task_status_labels": {"pending": "Pendente", "in_progress": "Em andamento", "done": "Concluída", "cancelled": "Cancelada"},
+        "priority_labels": {"low": "Baixa", "normal": "Normal", "high": "Alta"},
+        "pay_type_labels": {"daily": "Diária", "hourly": "Por hora", "weekly": "Semanal", "fixed": "Valor fixo"},
+        "employee_expense_labels": {"daily": "Diária", "meal": "Alimentação", "fuel": "Combustível", "advance": "Adiantamento", "payment": "Pagamento", "other": "Outro"},
         "payment_labels": {"pending": "Pendente", "partial": "Parcial", "paid": "Pago"},
         "quote_status_labels": {"draft": "Rascunho", "sent": "Enviado", "approved": "Aprovado", "rejected": "Recusado"},
     }
@@ -328,10 +414,32 @@ def inject_globals():
 def login_required(f):
     @wraps(f)
     def wrapped(*args, **kwargs):
-        if not session.get("user_id"):
+        if not session.get("user_id") and not session.get("employee_id"):
             return redirect(url_for("login"))
         return f(*args, **kwargs)
     return wrapped
+
+
+def admin_required(f):
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        if not session.get("user_id"):
+            if session.get("employee_id"):
+                return redirect(url_for("helper_dashboard"))
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return wrapped
+
+
+@app.before_request
+def restrict_employee_access():
+    if not session.get("employee_id"):
+        return None
+    endpoint = request.endpoint or ""
+    allowed = {"static", "login", "logout", "health"}
+    if endpoint in allowed or endpoint.startswith("helper_"):
+        return None
+    return redirect(url_for("helper_dashboard"))
 
 
 def sync_service_total(service):
@@ -402,7 +510,9 @@ def setup():
         settings.business_name = business_name or "Guilherme Elétrica"
         settings.owner_name = owner_name or "Guilherme"
         db.session.commit()
+        session.clear()
         session["user_id"] = user.id
+        session["role"] = "admin"
         flash("Sistema configurado. Bem-vindo!", "success")
         return redirect(url_for("dashboard"))
     return render_template("setup.html")
@@ -417,8 +527,16 @@ def login():
         password = request.form.get("password", "")
         user = User.query.filter_by(username=username).first()
         if user and check_password_hash(user.password_hash, password):
+            session.clear()
             session["user_id"] = user.id
+            session["role"] = "admin"
             return redirect(request.args.get("next") or url_for("dashboard"))
+        employee = Employee.query.filter_by(username=username, active=True).first()
+        if employee and employee.password_hash and check_password_hash(employee.password_hash, password):
+            session.clear()
+            session["employee_id"] = employee.id
+            session["role"] = "employee"
+            return redirect(url_for("helper_dashboard"))
         flash("Usuário ou senha inválidos.", "error")
     return render_template("login.html")
 
@@ -454,6 +572,8 @@ def dashboard():
     ).scalar() or 0
     pending_count = FinanceEntry.query.filter_by(type="income", status="pending").count()
     low_stock = Material.query.filter(Material.stock_qty <= Material.min_stock).order_by(Material.name).limit(8).all()
+    team_pending_tasks = EmployeeTask.query.join(Employee).filter(Employee.active.is_(True), EmployeeTask.status.in_(["pending", "in_progress"]), EmployeeTask.task_date <= today).count()
+    helper_pending_amount = db.session.query(func.coalesce(func.sum(EmployeeExpense.amount), 0)).join(Employee).filter(Employee.active.is_(True), EmployeeExpense.status == "pending").scalar() or 0
 
     return render_template(
         "dashboard.html",
@@ -465,6 +585,8 @@ def dashboard():
         receivable=receivable,
         pending_count=pending_count,
         low_stock=low_stock,
+        team_pending_tasks=team_pending_tasks,
+        helper_pending_amount=helper_pending_amount,
     )
 
 
@@ -592,6 +714,7 @@ def services():
 @login_required
 def service_new():
     clients_list = Client.query.order_by(Client.name).all()
+    employees_list = Employee.query.filter_by(active=True).order_by(Employee.name).all()
     selected_client = request.args.get("client_id", type=int)
     selected_date = parse_date(request.args.get("date"), date.today())
     if request.method == "POST":
@@ -599,7 +722,7 @@ def service_new():
         client = Client.query.get(client_id) if client_id else None
         if not client:
             flash("Selecione um cliente.", "error")
-            return render_template("service_form.html", service=None, clients=clients_list, selected_client=client_id, selected_date=selected_date)
+            return render_template("service_form.html", service=None, clients=clients_list, employees=employees_list, selected_client=client_id, selected_date=selected_date, assigned_employee_id=request.form.get("employee_id", type=int))
         all_day = request.form.get("all_day") == "1"
         service = Service(
             client_id=client.id,
@@ -621,15 +744,19 @@ def service_new():
         )
         if not service.title:
             flash("Informe o serviço.", "error")
-            return render_template("service_form.html", service=service, clients=clients_list, selected_client=client_id, selected_date=selected_date)
+            return render_template("service_form.html", service=service, clients=clients_list, employees=employees_list, selected_client=client_id, selected_date=selected_date, assigned_employee_id=request.form.get("employee_id", type=int))
         sync_service_total(service)
         db.session.add(service)
         db.session.flush()
         ensure_income_entry(service)
+        employee_id = request.form.get("employee_id", type=int)
+        employee = db.session.get(Employee, employee_id) if employee_id else None
+        if employee and employee.active:
+            db.session.add(ServiceAssignment(service_id=service.id, employee_id=employee.id))
         db.session.commit()
         flash("Serviço agendado.", "success")
         return redirect(url_for("service_detail", service_id=service.id))
-    return render_template("service_form.html", service=None, clients=clients_list, selected_client=selected_client, selected_date=selected_date)
+    return render_template("service_form.html", service=None, clients=clients_list, employees=employees_list, selected_client=selected_client, selected_date=selected_date, assigned_employee_id=None)
 
 
 @app.route("/services/<int:service_id>")
@@ -638,7 +765,10 @@ def service_detail(service_id):
     service = Service.query.get_or_404(service_id)
     materials = Material.query.order_by(Material.name).all()
     elapsed = service.elapsed_seconds()
-    return render_template("service_detail.html", service=service, materials=materials, elapsed=elapsed)
+    assignments = ServiceAssignment.query.filter_by(service_id=service.id).all()
+    helper_expenses = EmployeeExpense.query.filter_by(service_id=service.id).order_by(EmployeeExpense.expense_date.desc()).all()
+    helper_cost = sum((Decimal(x.amount or 0) for x in helper_expenses), Decimal("0"))
+    return render_template("service_detail.html", service=service, materials=materials, elapsed=elapsed, assignments=assignments, helper_expenses=helper_expenses, helper_cost=helper_cost)
 
 
 @app.route("/services/<int:service_id>/edit", methods=["GET", "POST"])
@@ -646,6 +776,7 @@ def service_detail(service_id):
 def service_edit(service_id):
     service = Service.query.get_or_404(service_id)
     clients_list = Client.query.order_by(Client.name).all()
+    employees_list = Employee.query.filter_by(active=True).order_by(Employee.name).all()
     if request.method == "POST":
         service.client_id = request.form.get("client_id", type=int)
         service.title = request.form.get("title", "").strip()
@@ -665,17 +796,28 @@ def service_edit(service_id):
         service.notes = request.form.get("notes", "").strip()
         sync_service_total(service)
         ensure_income_entry(service)
+        ServiceAssignment.query.filter_by(service_id=service.id).delete(synchronize_session=False)
+        employee_id = request.form.get("employee_id", type=int)
+        employee = db.session.get(Employee, employee_id) if employee_id else None
+        if employee and employee.active:
+            db.session.add(ServiceAssignment(service_id=service.id, employee_id=employee.id))
         db.session.commit()
         flash("Serviço atualizado.", "success")
         return redirect(url_for("service_detail", service_id=service.id))
-    return render_template("service_form.html", service=service, clients=clients_list, selected_client=service.client_id, selected_date=service.service_date)
+    assignment = ServiceAssignment.query.filter_by(service_id=service.id).first()
+    return render_template("service_form.html", service=service, clients=clients_list, employees=employees_list, selected_client=service.client_id, selected_date=service.service_date, assigned_employee_id=assignment.employee_id if assignment else None)
 
 
 @app.route("/services/<int:service_id>/delete", methods=["POST"])
 @login_required
 def service_delete(service_id):
     service = Service.query.get_or_404(service_id)
-    FinanceEntry.query.filter_by(service_id=service.id).delete(synchronize_session=False)
+    FinanceEntry.query.filter_by(service_id=service.id, type="income").delete(synchronize_session=False)
+    FinanceEntry.query.filter_by(service_id=service.id, type="expense").update({FinanceEntry.service_id: None}, synchronize_session=False)
+    EmployeeExpense.query.filter_by(service_id=service.id).update({EmployeeExpense.service_id: None}, synchronize_session=False)
+    EmployeeTask.query.filter_by(service_id=service.id).update({EmployeeTask.service_id: None}, synchronize_session=False)
+    EmployeeTimeSession.query.filter_by(service_id=service.id).delete(synchronize_session=False)
+    ServiceAssignment.query.filter_by(service_id=service.id).delete(synchronize_session=False)
     # Return linked inventory usage to stock.
     for sm in service.service_materials:
         if sm.material:
@@ -1067,6 +1209,10 @@ def finance_new():
 @login_required
 def finance_edit(entry_id):
     entry = FinanceEntry.query.get_or_404(entry_id)
+    team_expense = EmployeeExpense.query.filter_by(finance_entry_id=entry.id).first()
+    if team_expense:
+        flash("Esse lançamento pertence ao controle da equipe. Edite pelo cadastro do ajudante para manter tudo sincronizado.", "error")
+        return redirect(url_for("employee_detail", employee_id=team_expense.employee_id))
     clients_list = Client.query.order_by(Client.name).all()
     if request.method == "POST":
         entry.type = request.form.get("type", entry.type)
@@ -1099,7 +1245,7 @@ def finance_toggle(entry_id):
     else:
         entry.status = "paid"
         entry.paid_date = date.today()
-    if entry.service_id:
+    if entry.type == "income" and entry.service_id:
         service = Service.query.get(entry.service_id)
         if service:
             if entry.status == "paid":
@@ -1108,6 +1254,9 @@ def finance_toggle(entry_id):
             elif service.payment_status == "paid":
                 service.amount_paid = 0
                 service.payment_status = "pending"
+    team_expense = EmployeeExpense.query.filter_by(finance_entry_id=entry.id).first()
+    if team_expense:
+        team_expense.status = entry.status
     db.session.commit()
     flash("Situação financeira atualizada.", "success")
     return redirect(request.referrer or url_for("finance"))
@@ -1117,6 +1266,10 @@ def finance_toggle(entry_id):
 @login_required
 def finance_delete(entry_id):
     entry = FinanceEntry.query.get_or_404(entry_id)
+    team_expense = EmployeeExpense.query.filter_by(finance_entry_id=entry.id).first()
+    if team_expense:
+        flash("Esse lançamento pertence ao controle da equipe. Exclua pelo cadastro do ajudante.", "error")
+        return redirect(url_for("employee_detail", employee_id=team_expense.employee_id))
     if entry.service_id:
         flash("Esse lançamento veio de um serviço. Altere o serviço para manter os dados sincronizados.", "error")
         return redirect(url_for("finance"))
@@ -1217,6 +1370,335 @@ def material_delete(material_id):
     return redirect(url_for("materials"))
 
 
+# -------------------- Equipe / ajudantes --------------------
+def employee_elapsed_seconds(employee_id, start=None, end=None):
+    query = EmployeeTimeSession.query.filter_by(employee_id=employee_id)
+    if start:
+        query = query.filter(EmployeeTimeSession.started_at >= datetime.combine(start, datetime.min.time()))
+    if end:
+        query = query.filter(EmployeeTimeSession.started_at < datetime.combine(end + timedelta(days=1), datetime.min.time()))
+    total = 0
+    now_utc = datetime.utcnow()
+    for item in query.all():
+        finish = item.ended_at or now_utc
+        total += max(0, int((finish - item.started_at).total_seconds()))
+    return total
+
+
+def employee_running_session(employee_id, task_id=None, service_id=None):
+    query = EmployeeTimeSession.query.filter_by(employee_id=employee_id, ended_at=None)
+    if task_id is not None:
+        query = query.filter_by(task_id=task_id)
+    if service_id is not None:
+        query = query.filter_by(service_id=service_id)
+    return query.order_by(EmployeeTimeSession.started_at.desc()).first()
+
+
+def sync_employee_expense_finance(expense):
+    description = f"Equipe - {expense.employee.name}: {dict(daily='Diária', meal='Alimentação', fuel='Combustível', advance='Adiantamento', payment='Pagamento', other='Outro').get(expense.category, expense.category)}"
+    if expense.notes:
+        description += f" - {expense.notes}"
+    entry = db.session.get(FinanceEntry, expense.finance_entry_id) if expense.finance_entry_id else None
+    if not entry:
+        entry = FinanceEntry(type="expense", service_id=expense.service_id, description=description, category="Equipe / Ajudante", amount=expense.amount, due_date=expense.expense_date, status=expense.status)
+        db.session.add(entry)
+        db.session.flush()
+        expense.finance_entry_id = entry.id
+    entry.service_id = expense.service_id
+    entry.description = description
+    entry.category = "Equipe / Ajudante"
+    entry.amount = expense.amount
+    entry.due_date = expense.expense_date
+    entry.status = expense.status
+    entry.paid_date = expense.expense_date if expense.status == "paid" else None
+
+
+@app.route("/team")
+@admin_required
+def team():
+    employees = Employee.query.order_by(Employee.active.desc(), Employee.name).all()
+    month_start = date.today().replace(day=1)
+    next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    cards = []
+    for employee in employees:
+        pending_tasks = EmployeeTask.query.filter(EmployeeTask.employee_id == employee.id, EmployeeTask.status.in_(["pending", "in_progress"])).count()
+        month_expenses = db.session.query(func.coalesce(func.sum(EmployeeExpense.amount), 0)).filter(EmployeeExpense.employee_id == employee.id, EmployeeExpense.expense_date >= month_start, EmployeeExpense.expense_date < next_month).scalar() or 0
+        pending_pay = db.session.query(func.coalesce(func.sum(EmployeeExpense.amount), 0)).filter(EmployeeExpense.employee_id == employee.id, EmployeeExpense.status == "pending").scalar() or 0
+        cards.append({"employee": employee, "pending_tasks": pending_tasks, "month_expenses": month_expenses, "pending_pay": pending_pay, "seconds": employee_elapsed_seconds(employee.id, month_start, date.today())})
+    return render_template("team.html", cards=cards)
+
+
+@app.route("/team/new", methods=["GET", "POST"])
+@admin_required
+def employee_new():
+    if request.method == "POST":
+        employee = Employee(name=request.form.get("name", "").strip(), phone=request.form.get("phone", "").strip(), pay_type=request.form.get("pay_type", "daily"), rate=decimal_or_zero(request.form.get("rate")), notes=request.form.get("notes", "").strip(), active=True)
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        if not employee.name:
+            flash("Informe o nome do ajudante.", "error")
+            return render_template("employee_form.html", employee=employee)
+        if username:
+            if User.query.filter_by(username=username).first() or Employee.query.filter_by(username=username).first():
+                flash("Esse usuário já está em uso.", "error")
+                return render_template("employee_form.html", employee=employee)
+            if len(password) < 4:
+                flash("Para liberar o acesso do ajudante, informe uma senha com pelo menos 4 caracteres.", "error")
+                return render_template("employee_form.html", employee=employee)
+            employee.username = username
+            employee.password_hash = generate_password_hash(password)
+        db.session.add(employee)
+        db.session.commit()
+        flash("Ajudante cadastrado.", "success")
+        return redirect(url_for("employee_detail", employee_id=employee.id))
+    return render_template("employee_form.html", employee=None)
+
+
+@app.route("/team/<int:employee_id>")
+@admin_required
+def employee_detail(employee_id):
+    employee = Employee.query.get_or_404(employee_id)
+    start = parse_date(request.args.get("start"), date.today().replace(day=1))
+    end = parse_date(request.args.get("end"), date.today())
+    tasks = EmployeeTask.query.filter_by(employee_id=employee.id).order_by(EmployeeTask.task_date.desc(), EmployeeTask.id.desc()).limit(50).all()
+    assignments = ServiceAssignment.query.filter_by(employee_id=employee.id).join(Service, Service.id == ServiceAssignment.service_id).order_by(Service.service_date.desc()).limit(30).all()
+    expenses = EmployeeExpense.query.filter(EmployeeExpense.employee_id == employee.id, EmployeeExpense.expense_date >= start, EmployeeExpense.expense_date <= end).order_by(EmployeeExpense.expense_date.desc(), EmployeeExpense.id.desc()).all()
+    total_expenses = sum((Decimal(x.amount or 0) for x in expenses), Decimal("0"))
+    paid_expenses = sum((Decimal(x.amount or 0) for x in expenses if x.status == "paid"), Decimal("0"))
+    pending_expenses = sum((Decimal(x.amount or 0) for x in expenses if x.status == "pending"), Decimal("0"))
+    elapsed = employee_elapsed_seconds(employee.id, start, end)
+    return render_template("employee_detail.html", employee=employee, tasks=tasks, assignments=assignments, expenses=expenses, total_expenses=total_expenses, paid_expenses=paid_expenses, pending_expenses=pending_expenses, elapsed=elapsed, start=start, end=end, services=Service.query.order_by(Service.service_date.desc()).limit(80).all(), clients=Client.query.order_by(Client.name).all())
+
+
+@app.route("/team/<int:employee_id>/edit", methods=["GET", "POST"])
+@admin_required
+def employee_edit(employee_id):
+    employee = Employee.query.get_or_404(employee_id)
+    if request.method == "POST":
+        employee.name = request.form.get("name", "").strip()
+        employee.phone = request.form.get("phone", "").strip()
+        employee.pay_type = request.form.get("pay_type", "daily")
+        employee.rate = decimal_or_zero(request.form.get("rate"))
+        employee.notes = request.form.get("notes", "").strip()
+        employee.active = request.form.get("active") == "1"
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        if username != (employee.username or ""):
+            if username and (User.query.filter_by(username=username).first() or Employee.query.filter(Employee.username == username, Employee.id != employee.id).first()):
+                flash("Esse usuário já está em uso.", "error")
+                return render_template("employee_form.html", employee=employee)
+            employee.username = username or None
+            if not username:
+                employee.password_hash = ""
+        if password:
+            if len(password) < 4:
+                flash("A senha precisa ter pelo menos 4 caracteres.", "error")
+                return render_template("employee_form.html", employee=employee)
+            employee.password_hash = generate_password_hash(password)
+        db.session.commit()
+        flash("Cadastro da equipe atualizado.", "success")
+        return redirect(url_for("employee_detail", employee_id=employee.id))
+    return render_template("employee_form.html", employee=employee)
+
+
+@app.route("/team/tasks/new", methods=["GET", "POST"])
+@admin_required
+def team_task_new():
+    employee_id = request.args.get("employee_id", type=int) or request.form.get("employee_id", type=int)
+    service_id = request.args.get("service_id", type=int) or request.form.get("service_id", type=int)
+    selected_service = db.session.get(Service, service_id) if service_id else None
+    if request.method == "POST":
+        employee = db.session.get(Employee, employee_id) if employee_id else None
+        if not employee:
+            flash("Selecione o ajudante.", "error")
+        else:
+            client_id = request.form.get("client_id", type=int) or (selected_service.client_id if selected_service else None)
+            client = db.session.get(Client, client_id) if client_id else None
+            task = EmployeeTask(employee_id=employee.id, client_id=client_id, service_id=service_id, title=request.form.get("title", "").strip(), task_date=parse_date(request.form.get("task_date"), date.today()), task_time=parse_time(request.form.get("task_time")), description=request.form.get("description", "").strip(), address=request.form.get("address", "").strip() or (selected_service.address if selected_service else (client.address if client else "")), priority=request.form.get("priority", "normal"), status="pending")
+            if task.title:
+                db.session.add(task)
+                db.session.commit()
+                flash("Tarefa enviada para o ajudante.", "success")
+                return redirect(url_for("employee_detail", employee_id=employee.id))
+            flash("Informe a tarefa.", "error")
+    return render_template("task_form.html", employees=Employee.query.filter_by(active=True).order_by(Employee.name).all(), clients=Client.query.order_by(Client.name).all(), services=Service.query.order_by(Service.service_date.desc()).limit(100).all(), employee_id=employee_id, service_id=service_id, selected_service=selected_service)
+
+
+@app.route("/team/tasks/<int:task_id>/status", methods=["POST"])
+@admin_required
+def team_task_status(task_id):
+    task = EmployeeTask.query.get_or_404(task_id)
+    status = request.form.get("status", "pending")
+    if status not in {"pending", "in_progress", "done", "cancelled"}:
+        abort(400)
+    task.status = status
+    task.completed_at = datetime.utcnow() if status == "done" else None
+    if status in {"done", "cancelled"}:
+        for running in EmployeeTimeSession.query.filter_by(task_id=task.id, ended_at=None).all():
+            running.ended_at = datetime.utcnow()
+    db.session.commit()
+    flash("Tarefa atualizada.", "success")
+    return redirect(request.referrer or url_for("employee_detail", employee_id=task.employee_id))
+
+
+@app.route("/team/tasks/<int:task_id>/delete", methods=["POST"])
+@admin_required
+def team_task_delete(task_id):
+    task = EmployeeTask.query.get_or_404(task_id)
+    employee_id = task.employee_id
+    EmployeeTimeSession.query.filter_by(task_id=task.id).delete(synchronize_session=False)
+    db.session.delete(task)
+    db.session.commit()
+    flash("Tarefa excluída.", "success")
+    return redirect(url_for("employee_detail", employee_id=employee_id))
+
+
+@app.route("/team/<int:employee_id>/expenses/new", methods=["POST"])
+@admin_required
+def employee_expense_new(employee_id):
+    employee = Employee.query.get_or_404(employee_id)
+    amount = decimal_or_zero(request.form.get("amount"))
+    if amount <= 0:
+        flash("Informe um valor maior que zero.", "error")
+        return redirect(url_for("employee_detail", employee_id=employee.id))
+    expense = EmployeeExpense(employee_id=employee.id, service_id=request.form.get("service_id", type=int), expense_date=parse_date(request.form.get("expense_date"), date.today()), category=request.form.get("category", "daily"), amount=amount, status=request.form.get("status", "paid"), notes=request.form.get("notes", "").strip())
+    db.session.add(expense)
+    db.session.flush()
+    sync_employee_expense_finance(expense)
+    db.session.commit()
+    flash("Gasto da equipe lançado no financeiro.", "success")
+    return redirect(url_for("employee_detail", employee_id=employee.id))
+
+
+@app.route("/team/expenses/<int:expense_id>/toggle", methods=["POST"])
+@admin_required
+def employee_expense_toggle(expense_id):
+    expense = EmployeeExpense.query.get_or_404(expense_id)
+    expense.status = "paid" if expense.status == "pending" else "pending"
+    sync_employee_expense_finance(expense)
+    db.session.commit()
+    flash("Situação do gasto atualizada.", "success")
+    return redirect(request.referrer or url_for("employee_detail", employee_id=expense.employee_id))
+
+
+@app.route("/team/expenses/<int:expense_id>/delete", methods=["POST"])
+@admin_required
+def employee_expense_delete(expense_id):
+    expense = EmployeeExpense.query.get_or_404(expense_id)
+    employee_id = expense.employee_id
+    if expense.finance_entry_id:
+        entry = db.session.get(FinanceEntry, expense.finance_entry_id)
+        if entry:
+            db.session.delete(entry)
+    db.session.delete(expense)
+    db.session.commit()
+    flash("Gasto excluído do controle da equipe e do financeiro.", "success")
+    return redirect(url_for("employee_detail", employee_id=employee_id))
+
+
+# -------------------- Área do ajudante --------------------
+@app.route("/me")
+@login_required
+def helper_dashboard():
+    employee = current_employee()
+    if not employee:
+        return redirect(url_for("dashboard"))
+    today_ = date.today()
+    tasks = EmployeeTask.query.filter(EmployeeTask.employee_id == employee.id, EmployeeTask.status != "cancelled", EmployeeTask.task_date <= today_ + timedelta(days=7)).order_by(EmployeeTask.task_date, EmployeeTask.task_time.asc().nullslast(), EmployeeTask.id).all()
+    assignments = ServiceAssignment.query.filter_by(employee_id=employee.id).join(Service, Service.id == ServiceAssignment.service_id).filter(Service.status != "cancelled", Service.service_date >= today_ - timedelta(days=1), Service.service_date <= today_ + timedelta(days=14)).order_by(Service.service_date, Service.service_time.asc().nullslast()).all()
+    running = EmployeeTimeSession.query.filter_by(employee_id=employee.id, ended_at=None).order_by(EmployeeTimeSession.started_at.desc()).first()
+    today_seconds = employee_elapsed_seconds(employee.id, today_, today_)
+    return render_template("helper_dashboard.html", employee=employee, tasks=tasks, assignments=assignments, running=running, today_seconds=today_seconds)
+
+
+@app.route("/me/tasks/<int:task_id>/status", methods=["POST"])
+@login_required
+def helper_task_status(task_id):
+    employee = current_employee()
+    task = EmployeeTask.query.filter_by(id=task_id, employee_id=employee.id if employee else -1).first_or_404()
+    status = request.form.get("status", "pending")
+    if status not in {"pending", "in_progress", "done"}:
+        abort(400)
+    task.status = status
+    task.completed_at = datetime.utcnow() if status == "done" else None
+    if status == "done":
+        for running in EmployeeTimeSession.query.filter_by(employee_id=employee.id, task_id=task.id, ended_at=None).all():
+            running.ended_at = datetime.utcnow()
+    db.session.commit()
+    flash("Tarefa atualizada.", "success")
+    return redirect(url_for("helper_dashboard"))
+
+
+@app.route("/me/tasks/<int:task_id>/timer/start", methods=["POST"])
+@login_required
+def helper_task_timer_start(task_id):
+    employee = current_employee()
+    task = EmployeeTask.query.filter_by(id=task_id, employee_id=employee.id if employee else -1).first_or_404()
+    for running in EmployeeTimeSession.query.filter_by(employee_id=employee.id, ended_at=None).all():
+        running.ended_at = datetime.utcnow()
+    db.session.add(EmployeeTimeSession(employee_id=employee.id, task_id=task.id, service_id=task.service_id, started_at=datetime.utcnow()))
+    task.status = "in_progress"
+    db.session.commit()
+    flash("Seu cronômetro foi iniciado.", "success")
+    return redirect(url_for("helper_dashboard"))
+
+
+@app.route("/me/tasks/<int:task_id>/timer/pause", methods=["POST"])
+@login_required
+def helper_task_timer_pause(task_id):
+    employee = current_employee()
+    task = EmployeeTask.query.filter_by(id=task_id, employee_id=employee.id if employee else -1).first_or_404()
+    running = employee_running_session(employee.id, task_id=task.id)
+    if running:
+        running.ended_at = datetime.utcnow()
+        db.session.commit()
+        flash("Cronômetro pausado.", "success")
+    return redirect(url_for("helper_dashboard"))
+
+
+@app.route("/me/services/<int:service_id>")
+@login_required
+def helper_service(service_id):
+    employee = current_employee()
+    assignment = ServiceAssignment.query.filter_by(service_id=service_id, employee_id=employee.id if employee else -1).first_or_404()
+    service = assignment.service
+    tasks = EmployeeTask.query.filter_by(employee_id=employee.id, service_id=service.id).order_by(EmployeeTask.task_date, EmployeeTask.id).all()
+    running = employee_running_session(employee.id, service_id=service.id)
+    elapsed = 0
+    now_utc = datetime.utcnow()
+    for item in EmployeeTimeSession.query.filter_by(employee_id=employee.id, service_id=service.id).all():
+        elapsed += max(0, int(((item.ended_at or now_utc) - item.started_at).total_seconds()))
+    return render_template("helper_service.html", employee=employee, service=service, tasks=tasks, running=running, elapsed=elapsed)
+
+
+@app.route("/me/services/<int:service_id>/timer/start", methods=["POST"])
+@login_required
+def helper_service_timer_start(service_id):
+    employee = current_employee()
+    assignment = ServiceAssignment.query.filter_by(service_id=service_id, employee_id=employee.id if employee else -1).first_or_404()
+    for running in EmployeeTimeSession.query.filter_by(employee_id=employee.id, ended_at=None).all():
+        running.ended_at = datetime.utcnow()
+    db.session.add(EmployeeTimeSession(employee_id=employee.id, service_id=service_id, started_at=datetime.utcnow()))
+    if assignment.service.status == "scheduled":
+        assignment.service.status = "in_progress"
+    db.session.commit()
+    flash("Seu cronômetro foi iniciado.", "success")
+    return redirect(url_for("helper_service", service_id=service_id))
+
+
+@app.route("/me/services/<int:service_id>/timer/pause", methods=["POST"])
+@login_required
+def helper_service_timer_pause(service_id):
+    employee = current_employee()
+    ServiceAssignment.query.filter_by(service_id=service_id, employee_id=employee.id if employee else -1).first_or_404()
+    running = employee_running_session(employee.id, service_id=service_id)
+    if running:
+        running.ended_at = datetime.utcnow()
+        db.session.commit()
+        flash("Cronômetro pausado.", "success")
+    return redirect(url_for("helper_service", service_id=service_id))
+
+
 # -------------------- Reports --------------------
 @app.route("/reports")
 @login_required
@@ -1261,7 +1743,7 @@ def reports_export():
 
 # -------------------- Settings / backup --------------------
 @app.route("/settings", methods=["GET", "POST"])
-@login_required
+@admin_required
 def settings():
     settings = get_settings()
     if request.method == "POST":
@@ -1277,7 +1759,7 @@ def settings():
         password = request.form.get("password", "")
         user = db.session.get(User, session["user_id"])
         if username:
-            exists = User.query.filter(User.username == username, User.id != user.id).first()
+            exists = User.query.filter(User.username == username, User.id != user.id).first() or Employee.query.filter_by(username=username).first()
             if exists:
                 flash("Esse usuário já existe.", "error")
                 return render_template("settings.html", settings=settings, user=user)
@@ -1295,7 +1777,7 @@ def settings():
 
 
 @app.route("/backup/download")
-@login_required
+@admin_required
 def backup_download():
     db.session.commit()
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")

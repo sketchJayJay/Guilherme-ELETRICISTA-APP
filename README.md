@@ -75,7 +75,7 @@ No sistema, abra **Configurações → Baixar backup agora**. O arquivo `.db` co
 - Impressão de OS e orçamento usa a impressão do navegador. No celular ou computador, escolha **Salvar como PDF** para gerar o PDF.
 - WhatsApp abre a conversa do cliente usando o número cadastrado.
 - Para instalações no Brasil, cadastre o telefone com DDD. O botão considera o código do país `55`.
-- O sistema é ideal para um profissional ou pequena equipe usando um único login.
+- O sistema atende Guilherme e uma pequena equipe, com acesso administrativo e login restrito para ajudantes.
 
 ## Uso no smartphone
 Esta versão foi ajustada para uso diário no celular:
@@ -93,3 +93,21 @@ Esta versão foi ajustada para uso diário no celular:
 **Android / Chrome:** abra o sistema, toque no menu do navegador e escolha **Adicionar à tela inicial** ou **Instalar app**.
 
 **iPhone / Safari:** abra o sistema, toque em **Compartilhar** e depois em **Adicionar à Tela de Início**.
+
+## Equipe / Ajudante
+A versão atual também atende quando Guilherme trabalha com ajudante:
+
+- cadastro de um ou mais ajudantes;
+- usuário e senha próprios para o ajudante;
+- acesso restrito no celular, sem financeiro geral, valores de clientes ou configurações;
+- atribuição de responsável diretamente no cadastro do serviço;
+- tarefas avulsas com dia, horário opcional, prioridade, cliente, endereço e instruções;
+- cronômetro próprio do ajudante em tarefa ou serviço;
+- acompanhamento de horas trabalhadas por período;
+- lançamento de diária, alimentação, combustível, adiantamento, pagamento e outros gastos;
+- cada gasto pode ser geral ou vinculado a um serviço específico;
+- gastos da equipe entram automaticamente no módulo Financeiro como despesas;
+- controle de valores pagos e ainda pendentes com o ajudante;
+- visão rápida da equipe no Dashboard e uma área exclusiva “Equipe / Ajudante”.
+
+O ajudante entra pelo **mesmo link do sistema** com o usuário e senha criados em `Equipe / Ajudante`. O sistema reconhece o perfil e abre apenas a tela **Meu dia**, com tarefas e serviços atribuídos.

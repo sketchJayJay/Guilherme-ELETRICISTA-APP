@@ -1,0 +1,15 @@
+{% extends 'base.html' %}{% block content %}
+<div class="page-head"><div><h1>{{ 'Editar ajudante' if employee else 'Novo ajudante' }}</h1><p>Você pode criar um acesso separado para ele usar no próprio celular.</p></div></div>
+<form method="post" class="card"><div class="card-body form-grid">
+<div class="field full"><label>Nome *</label><input class="input" name="name" required value="{{ employee.name if employee else '' }}" placeholder="Ex.: João"></div>
+<div class="field"><label>Telefone</label><input class="input" name="phone" inputmode="tel" value="{{ employee.phone if employee else '' }}"></div>
+<div class="field"><label>Forma de pagamento</label><select class="select" name="pay_type">{% for k,v in pay_type_labels.items() %}<option value="{{ k }}" {% if (employee.pay_type if employee else 'daily')==k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
+<div class="field"><label>Valor de referência</label><input class="input" name="rate" inputmode="decimal" value="{{ employee.rate if employee else '0' }}"><div class="help">Ex.: diária de R$ 150 ou valor/hora.</div></div>
+{% if employee %}<div class="field"><label>Situação</label><select class="select" name="active"><option value="1" {% if employee.active %}selected{% endif %}>Ativo</option><option value="0" {% if not employee.active %}selected{% endif %}>Inativo</option></select></div>{% endif %}
+<div class="field full team-login-box"><div class="section-mini-title">📱 Acesso do ajudante</div><div class="help">Se preencher usuário e senha, ele entra no mesmo endereço do sistema, mas vê somente as tarefas e serviços atribuídos a ele.</div></div>
+<div class="field"><label>Usuário do ajudante</label><input class="input" name="username" autocomplete="off" value="{{ employee.username if employee and employee.username else '' }}" placeholder="Ex.: joao"></div>
+<div class="field"><label>{{ 'Nova senha' if employee else 'Senha' }}</label><input class="input" type="password" name="password" autocomplete="new-password" placeholder="{{ 'Deixe vazio para manter' if employee else 'Mínimo 4 caracteres' }}"></div>
+<div class="field full"><label>Observações</label><textarea class="textarea" name="notes">{{ employee.notes if employee else '' }}</textarea></div>
+<div class="field full"><div class="actions"><button class="btn primary" type="submit">Salvar ajudante</button><a class="btn" href="{{ url_for('employee_detail', employee_id=employee.id) if employee else url_for('team') }}">Cancelar</a></div></div>
+</div></form>
+{% endblock %}

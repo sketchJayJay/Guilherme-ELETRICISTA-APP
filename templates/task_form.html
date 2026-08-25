@@ -1,0 +1,15 @@
+{% extends 'base.html' %}{% block content %}
+<div class="page-head"><div><h1>Nova tarefa para a equipe</h1><p>Uma tarefa simples para aparecer direto no celular do ajudante.</p></div></div>
+<form method="post" class="card"><div class="card-body form-grid">
+<div class="field full"><label>Ajudante *</label><select class="select" name="employee_id" required><option value="">Selecione...</option>{% for e in employees %}<option value="{{ e.id }}" {% if employee_id==e.id %}selected{% endif %}>{{ e.name }}</option>{% endfor %}</select></div>
+<div class="field full"><label>Vincular a um serviço</label><select class="select" name="service_id" id="taskService"><option value="">Sem vínculo</option>{% for s in services %}<option value="{{ s.id }}" {% if service_id==s.id %}selected{% endif %}>{{ s.service_date|datebr }} · {{ s.client.name }} · {{ s.title }}</option>{% endfor %}</select></div>
+<div class="field full"><label>Cliente (opcional)</label><select class="select" name="client_id"><option value="">Sem cliente</option>{% for c in clients %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select></div>
+<div class="field full"><label>Tarefa *</label><input class="input" name="title" required value="{{ selected_service.title if selected_service else '' }}" placeholder="Ex.: finalizar tomadas da cozinha"></div>
+<div class="field"><label>Dia</label><input class="input" type="date" name="task_date" value="{{ (selected_service.service_date if selected_service else today).isoformat() }}"></div>
+<div class="field"><label>Horário opcional</label><input class="input" type="time" name="task_time" value="{{ selected_service.service_time|timebr if selected_service and selected_service.service_time else '' }}"></div>
+<div class="field"><label>Prioridade</label><select class="select" name="priority"><option value="normal">Normal</option><option value="high">Alta</option><option value="low">Baixa</option></select></div>
+<div class="field full"><label>Endereço</label><input class="input" name="address" value="{{ selected_service.address if selected_service else '' }}" placeholder="Local onde ele deve ir"></div>
+<div class="field full"><label>Instruções</label><textarea class="textarea" name="description" placeholder="Tudo que ele precisa saber para executar a tarefa"></textarea></div>
+<div class="field full"><div class="actions"><button class="btn primary" type="submit">Enviar tarefa</button><a class="btn" href="{{ url_for('team') }}">Cancelar</a></div></div>
+</div></form>
+{% endblock %}

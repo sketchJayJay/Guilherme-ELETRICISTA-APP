@@ -17,24 +17,32 @@
 <body>
 <div class="app-shell">
 <aside class="sidebar no-print">
-  <div class="brand"><div class="brand-mark">⚡</div><div><strong>{{ app_settings.business_name }}</strong><small>Gestão de serviços</small></div></div>
+  <div class="brand"><div class="brand-mark">⚡</div><div><strong>{{ app_settings.business_name }}</strong><small>{{ 'Área do ajudante' if is_employee else 'Gestão de serviços' }}</small></div></div>
+  {% if is_employee %}
+  <nav class="nav">
+    <a href="{{ url_for('helper_dashboard') }}" class="{% if request.endpoint=='helper_dashboard' %}active{% endif %}"><span class="ico">⌂</span> Meu dia</a>
+  </nav>
+  <div class="sidebar-footer"><a href="{{ url_for('logout') }}">↪ Sair</a></div>
+  {% else %}
   <nav class="nav">
     <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint=='dashboard' %}active{% endif %}"><span class="ico">⌂</span> Início</a>
     <a href="{{ url_for('agenda') }}" class="{% if request.endpoint=='agenda' %}active{% endif %}"><span class="ico">▣</span> Agenda</a>
     <a href="{{ url_for('clients') }}" class="{% if request.endpoint and request.endpoint.startswith('client') %}active{% endif %}"><span class="ico">👥</span> Clientes</a>
     <a href="{{ url_for('services') }}" class="{% if request.endpoint and request.endpoint.startswith('service') %}active{% endif %}"><span class="ico">⚙</span> Serviços</a>
+    <a href="{{ url_for('team') }}" class="{% if request.endpoint and (request.endpoint.startswith('team') or request.endpoint.startswith('employee')) %}active{% endif %}"><span class="ico">🧰</span> Equipe / Ajudante</a>
     <a href="{{ url_for('quotes') }}" class="{% if request.endpoint and request.endpoint.startswith('quote') %}active{% endif %}"><span class="ico">▤</span> Orçamentos</a>
     <a href="{{ url_for('finance') }}" class="{% if request.endpoint and request.endpoint.startswith('finance') %}active{% endif %}"><span class="ico">$</span> Financeiro</a>
     <a href="{{ url_for('materials') }}" class="{% if request.endpoint and request.endpoint.startswith('material') %}active{% endif %}"><span class="ico">▦</span> Materiais</a>
     <a href="{{ url_for('reports') }}" class="{% if request.endpoint and request.endpoint.startswith('report') %}active{% endif %}"><span class="ico">◫</span> Relatórios</a>
   </nav>
   <div class="sidebar-footer"><a href="{{ url_for('settings') }}">⚙ Configurações</a><a href="{{ url_for('logout') }}">↪ Sair</a></div>
+  {% endif %}
 </aside>
 <div class="sidebar-overlay no-print" onclick="closeSidebar()"></div>
 <main class="main">
 <header class="topbar no-print">
-  <div style="display:flex;align-items:center;gap:10px"><button class="btn sm menu-btn" onclick="toggleSidebar()">☰</button><div><div class="hello">Olá, {{ app_settings.owner_name or 'Guilherme' }} 👋</div><div class="date">{{ now.strftime('%d/%m/%Y') }}</div></div></div>
-  <div class="right-actions actions"><a class="btn sm" href="{{ url_for('client_new') }}">+ Cliente</a><a class="btn primary sm" href="{{ url_for('service_new') }}">+ Novo serviço</a></div>
+  <div style="display:flex;align-items:center;gap:10px"><button class="btn sm menu-btn" onclick="toggleSidebar()">☰</button><div><div class="hello">Olá, {{ current_employee.name if is_employee and current_employee else (app_settings.owner_name or 'Guilherme') }} 👋</div><div class="date">{{ now.strftime('%d/%m/%Y') }}</div></div></div>
+  {% if not is_employee %}<div class="right-actions actions"><a class="btn sm" href="{{ url_for('client_new') }}">+ Cliente</a><a class="btn primary sm" href="{{ url_for('service_new') }}">+ Novo serviço</a></div>{% endif %}
 </header>
 <div class="content">
 {% with messages=get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-wrap no-print">{% for cat,msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}</div>{% endif %}{% endwith %}
@@ -42,12 +50,21 @@
 </div>
 </main>
 </div>
+{% if is_employee %}
+<nav class="mobile-bottom helper-mobile no-print">
+<a href="{{ url_for('helper_dashboard') }}" class="active"><span>⌂</span>Meu dia</a>
+<a href="{{ url_for('helper_dashboard') }}#tarefas"><span>☑</span>Tarefas</a>
+<a href="{{ url_for('helper_dashboard') }}#servicos"><span>⚡</span>Serviços</a>
+<a href="{{ url_for('logout') }}"><span>↪</span>Sair</a>
+</nav>
+{% else %}
 <nav class="mobile-bottom no-print">
 <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint=='dashboard' %}active{% endif %}"><span>⌂</span>Início</a>
 <a href="{{ url_for('agenda') }}" class="{% if request.endpoint=='agenda' %}active{% endif %}"><span>▣</span>Agenda</a>
 <a class="mobile-new" href="{{ url_for('service_new') }}"><span>＋</span>Novo</a>
 <a href="{{ url_for('finance') }}" class="{% if request.endpoint and request.endpoint.startswith('finance') %}active{% endif %}"><span>$</span>Financeiro</a>
-<a href="{{ url_for('clients') }}" class="{% if request.endpoint and request.endpoint.startswith('client') %}active{% endif %}"><span>👥</span>Clientes</a>
+<a href="{{ url_for('team') }}" class="{% if request.endpoint and (request.endpoint.startswith('team') or request.endpoint.startswith('employee')) %}active{% endif %}"><span>🧰</span>Equipe</a>
 </nav>
+{% endif %}
 <script src="{{ url_for('static', filename='app.js') }}"></script>{% block scripts %}{% endblock %}
 </body></html>
