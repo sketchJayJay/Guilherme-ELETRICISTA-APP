@@ -122,3 +122,20 @@ O ajudante entra pelo **mesmo link do sistema** com o usuário e senha criados e
 ## Exclusões e correção de cadastros
 
 A interface administrativa possui opção de **Excluir** nos cadastros principais: clientes, serviços, orçamentos, lançamentos financeiros manuais, materiais, ajudantes, tarefas, gastos da equipe e materiais usados em serviços. Todas as exclusões exibem confirmação. Registros que fazem parte de histórico importante recebem proteção: por exemplo, um cliente com serviços/orçamentos precisa ter esse histórico removido primeiro; material já utilizado em serviço também não é apagado diretamente.
+
+## Melhorias de 26/08/2026
+
+### Notificação do ajudante
+- quando Guilherme atribui um serviço a um ajudante, o sistema envia uma notificação push imediatamente para os celulares autorizados;
+- no dia do serviço, o sistema envia um lembrete automático às **07:00** por padrão;
+- tarefas do ajudante também geram aviso e lembrete do dia;
+- no primeiro acesso do ajudante, abra **Meu dia → Ativar notificações**;
+- no iPhone, para push funcionar corretamente, adicione o sistema à **Tela de Início** pelo Safari e depois permita as notificações;
+- o domínio precisa estar em **HTTPS** para notificações push fora de localhost;
+- o horário pode ser alterado pelas variáveis `HELPER_NOTIFICATION_HOUR` e `HELPER_NOTIFICATION_MINUTE`.
+
+### Valor privado do ajudante
+No cadastro/edição do serviço existe o campo **Valor do ajudante neste serviço**. O ajudante visualiza somente esse valor, além do total da própria produção de hoje e dos serviços concluídos no mês. Ele não tem acesso ao valor cobrado do cliente, lucro da empresa ou financeiro geral.
+
+### Orçamento sem cliente cadastrado
+Em **Novo orçamento**, escolha **Cliente não cadastrado** e informe apenas nome, telefone e endereço, se quiser. O orçamento pode ser salvo, impresso e enviado por WhatsApp normalmente. Se for aprovado e transformado em serviço, o cliente é cadastrado automaticamente para não exigir retrabalho.

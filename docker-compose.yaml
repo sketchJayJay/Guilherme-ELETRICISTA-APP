@@ -6,6 +6,9 @@ services:
       SECRET_KEY: ${SECRET_KEY:-troque-esta-chave}
       DATA_DIR: /data
       PORT: 5000
+      APP_TIMEZONE: ${APP_TIMEZONE:-America/Sao_Paulo}
+      HELPER_NOTIFICATION_HOUR: ${HELPER_NOTIFICATION_HOUR:-7}
+      HELPER_NOTIFICATION_MINUTE: ${HELPER_NOTIFICATION_MINUTE:-0}
     volumes:
       - guilherme_eletrica_data:/data
     ports:

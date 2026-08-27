@@ -44,13 +44,19 @@
         <div class="form-grid more-options-body">
           <div class="field full">
             <label>Responsável pelo serviço</label>
-            <select class="select" name="employee_id">
+            <select class="select" name="employee_id" id="employeeSelect" onchange="toggleHelperValue()">
               <option value="">Somente Guilherme</option>
               {% for e in employees %}
               <option value="{{ e.id }}" {% if assigned_employee_id==e.id %}selected{% endif %}>Guilherme + {{ e.name }}</option>
               {% endfor %}
             </select>
-            <div class="help">Se escolher um ajudante, o serviço aparece no celular dele.</div>
+            <div class="help">Se escolher um ajudante, o serviço aparece no celular dele e ele recebe uma notificação.</div>
+          </div>
+
+          <div class="field full" id="helperValueField">
+            <label>Valor do ajudante neste serviço</label>
+            <input class="input" name="helper_value" inputmode="decimal" placeholder="Ex.: 120,00" value="{{ assigned_employee_value or '0' }}">
+            <div class="help">Esse é o único valor do serviço que o ajudante consegue enxergar. O valor cobrado do cliente continua privado.</div>
           </div>
 
           <div class="field">
@@ -141,6 +147,7 @@
 <script>
 function toggleTime(){document.getElementById('timeField').style.display=document.getElementById('allDay').value==='1'?'none':'grid'}
 function toggleCharge(){let h=document.getElementById('chargeType').value==='hourly';document.querySelectorAll('.hourly').forEach(x=>x.style.display=h?'grid':'none');document.querySelectorAll('.fixed').forEach(x=>x.style.display=h?'none':'grid')}
-toggleTime();toggleCharge();
+function toggleHelperValue(){const s=document.getElementById('employeeSelect');const f=document.getElementById('helperValueField');if(f)f.style.display=s&&s.value?'grid':'none'}
+toggleTime();toggleCharge();toggleHelperValue();
 </script>
 {% endblock %}

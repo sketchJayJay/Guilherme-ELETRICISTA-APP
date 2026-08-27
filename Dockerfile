@@ -6,4 +6,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 RUN mkdir -p /data
 EXPOSE 5000
-CMD ["gunicorn","-w","2","-b","0.0.0.0:5000","--timeout","60","app:app"]
+CMD ["gunicorn","-w","1","-b","0.0.0.0:5000","--timeout","60","app:app"]

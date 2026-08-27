@@ -166,7 +166,18 @@
       <div class="card-body">
         <div class="list">
           {% for a in assignments %}
-          <div class="service-row"><div><div class="row-title">🧰 {{ a.employee.name }}</div><div class="row-sub">Ajudante responsável neste serviço</div></div><a class="btn sm" href="{{ url_for('employee_detail', employee_id=a.employee.id) }}">Equipe</a></div>
+          <div class="service-row">
+            <div>
+              <div class="row-title">🧰 {{ a.employee.name }}</div>
+              <div class="row-sub">Valor dele neste serviço: {{ a.helper_value|money }}</div>
+            </div>
+            <div class="actions">
+              {% if a.employee.phone %}
+              <a class="btn sm success" target="_blank" href="https://wa.me/{{ a.employee.phone|wa }}?text={{ ('Olá, '+a.employee.name+'! Você tem o serviço '+service.title+' no dia '+(service.service_date|datebr)+'. Cliente: '+service.client.name+'. Endereço: '+(service.address or service.client.address or 'não informado')+'. Seu valor: '+(a.helper_value|money)+'.')|urlencode }}">Notificar WhatsApp</a>
+              {% endif %}
+              <a class="btn sm" href="{{ url_for('employee_detail', employee_id=a.employee.id) }}">Equipe</a>
+            </div>
+          </div>
           {% else %}<div class="empty">Nenhum ajudante atribuído. Edite o serviço para escolher um responsável.</div>{% endfor %}
         </div>
         {% if helper_expenses %}<hr style="border:0;border-top:1px solid var(--line);margin:14px 0"><div class="service-row"><span>Custos da equipe</span><strong>{{ helper_cost|money }}</strong></div>{% endif %}

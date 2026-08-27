@@ -1,10 +1,39 @@
 {% extends 'base.html' %}{% block title %}Meu dia · {{ app_settings.business_name }}{% endblock %}{% block content %}
 <div class="page-head"><div><h1>Meu dia ⚡</h1><p>{{ employee.name }}, aqui estão somente os trabalhos que foram passados para você.</p></div></div>
+
+<div class="helper-notify-bar card" style="margin-bottom:14px">
+  <div class="card-body">
+    <div style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+      <div><strong>🔔 Notificações de serviço</strong><div class="muted">Ative uma vez para receber no celular os serviços atribuídos e o lembrete do dia.</div></div>
+      <button class="btn primary" type="button" id="enablePushBtn">Ativar notificações</button>
+    </div>
+    <div class="muted" id="pushStatus" style="margin-top:8px"></div>
+  </div>
+</div>
+
+{% if unread_notifications %}
+<div class="card" style="margin-bottom:14px">
+  <div class="card-head"><h2>🔔 Avisos</h2><button class="btn sm" type="button" id="markNotificationsRead">Marcar como lidos</button></div>
+  <div class="card-body"><div class="list">
+    {% for n in unread_notifications %}
+    <div class="service-row notification-row" data-notification-id="{{ n.id }}">
+      <div><div class="row-title">{{ n.title }}</div><div class="row-sub">{{ n.message }}</div></div>
+      {% if n.service_id %}<a class="btn sm" href="{{ url_for('helper_service', service_id=n.service_id) }}">Abrir</a>{% endif %}
+    </div>
+    {% endfor %}
+  </div></div>
+</div>
+{% endif %}
+
 <div class="grid stats helper-stats">
 <div class="stat"><div class="label">Tempo hoje</div><div class="value">{{ today_seconds|duration }}</div><div class="foot">Tempo registrado no cronômetro</div></div>
+<div class="stat"><div class="label">Valor de hoje</div><div class="value">{{ today_value|money }}</div><div class="foot">Somente a sua parte dos serviços de hoje</div></div>
+<div class="stat"><div class="label">Feito no mês</div><div class="value">{{ month_done_value|money }}</div><div class="foot">Sua parte nos serviços concluídos</div></div>
 <div class="stat"><div class="label">Cronômetro</div><div class="value" style="font-size:18px">{{ 'Rodando' if running else 'Parado' }}</div><div class="foot">{{ 'Uma atividade está em andamento' if running else 'Inicie em uma tarefa ou serviço' }}</div></div>
 </div>
+
 <div class="card helper-running" style="margin-bottom:14px;{% if not running %}display:none{% endif %}">{% if running %}<div class="card-body"><div class="pulse-line"><span class="pulse-dot"></span><strong>Você está trabalhando agora</strong></div><div class="muted" style="margin-top:6px">{% if running.task %}{{ running.task.title }}{% elif running.service %}{{ running.service.title }}{% endif %}</div></div>{% endif %}</div>
+
 <div class="grid" id="tarefas">
 <div class="page-head compact"><div><h2>Tarefas</h2><p>Conclua ou use o cronômetro quando precisar registrar o tempo.</p></div></div>
 {% for t in tasks %}<div class="card helper-task-card {% if t.task_date==today %}today-card{% endif %}"><div class="card-body">
@@ -15,8 +44,37 @@
 <div class="actions helper-actions"><span class="badge task-{{ t.status }}">{{ task_status_labels[t.status] }}</span>{% set trunning = running and running.task_id==t.id %}{% if trunning %}<form method="post" action="{{ url_for('helper_task_timer_pause', task_id=t.id) }}"><button class="btn primary" type="submit">⏸ Pausar</button></form>{% elif t.status!='done' %}<form method="post" action="{{ url_for('helper_task_timer_start', task_id=t.id) }}"><button class="btn success" type="submit">▶ Iniciar</button></form>{% endif %}{% if t.status!='done' %}<form method="post" action="{{ url_for('helper_task_status', task_id=t.id) }}"><input type="hidden" name="status" value="done"><button class="btn" type="submit">✓ Concluir</button></form>{% else %}<form method="post" action="{{ url_for('helper_task_status', task_id=t.id) }}"><input type="hidden" name="status" value="pending"><button class="btn" type="submit">Reabrir</button></form>{% endif %}</div>
 </div></div>{% else %}<div class="card"><div class="card-body empty">Nenhuma tarefa para os próximos dias.</div></div>{% endfor %}
 </div>
+
 <div class="grid" id="servicos" style="margin-top:20px">
-<div class="page-head compact"><div><h2>Serviços atribuídos</h2><p>Abra para ver cliente, endereço, instruções e registrar seu tempo.</p></div></div>
-{% for a in assignments %}<a class="card helper-service-link" href="{{ url_for('helper_service', service_id=a.service.id) }}"><div class="card-body"><div class="helper-card-top"><div><div class="eyebrow">{{ a.service.service_date|datebr }}{% if not a.service.all_day and a.service.service_time %} · {{ a.service.service_time|timebr }}{% endif %}</div><h2>{{ a.service.title }}</h2><div class="muted">{{ a.service.client.name }}</div></div><span class="badge {{ a.service.status }}">{{ status_labels[a.service.status] }}</span></div></div></a>{% else %}<div class="card"><div class="card-body empty">Nenhum serviço atribuído a você.</div></div>{% endfor %}
+<div class="page-head compact"><div><h2>Serviços atribuídos</h2><p>O valor mostrado é somente o que foi definido para você neste serviço.</p></div></div>
+{% for a in assignments %}<a class="card helper-service-link" href="{{ url_for('helper_service', service_id=a.service.id) }}"><div class="card-body"><div class="helper-card-top"><div><div class="eyebrow">{{ a.service.service_date|datebr }}{% if not a.service.all_day and a.service.service_time %} · {{ a.service.service_time|timebr }}{% endif %}</div><h2>{{ a.service.title }}</h2><div class="muted">{{ a.service.client.name }}</div><div style="margin-top:7px;font-weight:900">💰 Sua parte: {{ a.helper_value|money }}</div></div><span class="badge {{ a.service.status }}">{{ status_labels[a.service.status] }}</span></div></div></a>{% else %}<div class="card"><div class="card-body empty">Nenhum serviço atribuído a você.</div></div>{% endfor %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const vapidPublicKey = {{ vapid_public_key|tojson }};
+function urlBase64ToUint8Array(base64String){const padding='='.repeat((4-base64String.length%4)%4);const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');const raw=atob(base64);return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)))}
+async function ensurePushSubscription(askPermission=false){
+  const status=document.getElementById('pushStatus');
+  if(!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)){if(status)status.textContent='Este aparelho/navegador não oferece notificações push.';return false}
+  const reg=await navigator.serviceWorker.register('/sw.js');
+  let permission=Notification.permission;
+  if(permission==='default' && askPermission) permission=await Notification.requestPermission();
+  if(permission!=='granted'){if(status)status.textContent='Notificações desativadas. No iPhone, adicione o sistema à Tela de Início e permita as notificações.';return false}
+  let sub=await reg.pushManager.getSubscription();
+  if(!sub){sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(vapidPublicKey)})}
+  const res=await fetch('{{ url_for("helper_push_subscribe") }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sub.toJSON())});
+  if(status)status.textContent=res.ok?'✅ Notificações ativadas neste celular.':'Não foi possível ativar as notificações.';
+  return res.ok;
+}
+document.getElementById('enablePushBtn')?.addEventListener('click',()=>ensurePushSubscription(true).catch(()=>{document.getElementById('pushStatus').textContent='Não foi possível ativar as notificações.'}));
+if('Notification' in window && Notification.permission==='granted') ensurePushSubscription(false).catch(()=>{});
+
+document.getElementById('markNotificationsRead')?.addEventListener('click',async()=>{
+  const ids=[...document.querySelectorAll('[data-notification-id]')].map(x=>Number(x.dataset.notificationId));
+  const r=await fetch('{{ url_for("helper_notifications_read") }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+  if(r.ok) location.reload();
+});
+</script>
 {% endblock %}

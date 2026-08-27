@@ -5,7 +5,10 @@ import shutil
 import zipfile
 import base64
 import uuid
+import json
+import threading
 from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from functools import wraps
 from decimal import Decimal, InvalidOperation
 
@@ -14,9 +17,13 @@ from flask import (
     session, send_file, send_from_directory, jsonify, abort
 )
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text as sql_text, inspect as sa_inspect
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from apscheduler.schedulers.background import BackgroundScheduler
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import serialization
+from pywebpush import webpush, WebPushException
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DATA_DIR = os.getenv("DATA_DIR", os.path.join(BASE_DIR, "data"))
@@ -31,6 +38,10 @@ app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "heic"}
+SYSTEM_QUOTE_CLIENT_NAME = "[SISTEMA] ORÇAMENTO AVULSO"
+VAPID_PRIVATE_PATH = os.path.join(DATA_DIR, "vapid_private.pem")
+VAPID_PUBLIC_PATH = os.path.join(DATA_DIR, "vapid_public.txt")
+APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "America/Sao_Paulo"))
 
 db = SQLAlchemy(app)
 
@@ -124,6 +135,10 @@ class TimerSession(db.Model):
 class Quote(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     client_id = db.Column(db.Integer, db.ForeignKey("client.id"), nullable=False, index=True)
+    guest_name = db.Column(db.String(140), default="")
+    guest_phone = db.Column(db.String(40), default="")
+    guest_address = db.Column(db.String(255), default="")
+    guest_city = db.Column(db.String(120), default="")
     title = db.Column(db.String(180), nullable=False)
     quote_date = db.Column(db.Date, default=date.today)
     valid_until = db.Column(db.Date, nullable=True)
@@ -138,6 +153,26 @@ class Quote(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     items = db.relationship("QuoteItem", backref="quote", cascade="all, delete-orphan", lazy=True)
+
+    @property
+    def customer_name(self):
+        return (self.guest_name or "").strip() or (self.client.name if self.client else "")
+
+    @property
+    def customer_phone(self):
+        return (self.guest_phone or "").strip() or (self.client.phone if self.client else "")
+
+    @property
+    def customer_address(self):
+        return (self.guest_address or "").strip() or (self.client.address if self.client else "")
+
+    @property
+    def customer_city(self):
+        return (self.guest_city or "").strip() or (self.client.city if self.client else "")
+
+    @property
+    def is_guest(self):
+        return bool((self.guest_name or "").strip())
 
 
 class QuoteItem(db.Model):
@@ -262,6 +297,7 @@ class ServiceAssignment(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     service_id = db.Column(db.Integer, db.ForeignKey("service.id"), nullable=False, index=True)
     employee_id = db.Column(db.Integer, db.ForeignKey("employee.id"), nullable=False, index=True)
+    helper_value = db.Column(db.Numeric(12, 2), default=0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint("service_id", "employee_id", name="uq_service_employee"),)
     service = db.relationship("Service")
@@ -311,6 +347,32 @@ class EmployeeTimeSession(db.Model):
     task = db.relationship("EmployeeTask")
 
 
+class EmployeeNotification(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey("employee.id"), nullable=False, index=True)
+    service_id = db.Column(db.Integer, db.ForeignKey("service.id"), nullable=True, index=True)
+    kind = db.Column(db.String(30), default="service")
+    title = db.Column(db.String(180), nullable=False)
+    message = db.Column(db.String(500), default="")
+    notification_date = db.Column(db.Date, nullable=False, default=date.today, index=True)
+    dedupe_key = db.Column(db.String(180), unique=True, nullable=True, index=True)
+    read_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    employee = db.relationship("Employee")
+    service = db.relationship("Service")
+
+
+class PushSubscription(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey("employee.id"), nullable=False, index=True)
+    endpoint = db.Column(db.Text, nullable=False, unique=True)
+    p256dh = db.Column(db.Text, nullable=False)
+    auth = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    employee = db.relationship("Employee")
+
+
 # -------------------- Helpers --------------------
 def money(v):
     try:
@@ -353,8 +415,165 @@ def parse_time(v):
         return None
 
 
+def local_today():
+    return datetime.now(APP_TZ).date()
+
+
 def phone_digits(phone):
     return "".join(ch for ch in (phone or "") if ch.isdigit())
+
+
+def get_quote_walkin_client():
+    client = Client.query.filter_by(name=SYSTEM_QUOTE_CLIENT_NAME).first()
+    if not client:
+        client = Client(
+            name=SYSTEM_QUOTE_CLIENT_NAME,
+            notes="Registro interno usado apenas para orçamentos de clientes ainda não cadastrados."
+        )
+        db.session.add(client)
+        db.session.flush()
+    return client
+
+
+def ensure_vapid_keys():
+    if os.path.exists(VAPID_PRIVATE_PATH) and os.path.exists(VAPID_PUBLIC_PATH):
+        return
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    public_numbers = private_key.public_key().public_numbers()
+    raw_public = b"\x04" + public_numbers.x.to_bytes(32, "big") + public_numbers.y.to_bytes(32, "big")
+    public_b64 = base64.urlsafe_b64encode(raw_public).decode("ascii").rstrip("=")
+    with open(VAPID_PRIVATE_PATH, "wb") as f:
+        f.write(private_pem)
+    with open(VAPID_PUBLIC_PATH, "w", encoding="utf-8") as f:
+        f.write(public_b64)
+
+
+def vapid_public_key():
+    ensure_vapid_keys()
+    try:
+        return open(VAPID_PUBLIC_PATH, "r", encoding="utf-8").read().strip()
+    except OSError:
+        return ""
+
+
+def send_push_to_employee(employee_id, title, message, url="/me"):
+    ensure_vapid_keys()
+    subs = PushSubscription.query.filter_by(employee_id=employee_id).all()
+    payload = json.dumps({"title": title, "body": message, "url": url})
+    stale = []
+    for sub in subs:
+        try:
+            webpush(
+                subscription_info={
+                    "endpoint": sub.endpoint,
+                    "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
+                },
+                data=payload,
+                vapid_private_key=VAPID_PRIVATE_PATH,
+                vapid_claims={"sub": "mailto:notificacoes@guilherme-eletrica.local"},
+                timeout=10,
+            )
+        except WebPushException as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status in {404, 410}:
+                stale.append(sub)
+        except Exception:
+            continue
+    if stale:
+        for sub in stale:
+            db.session.delete(sub)
+        db.session.commit()
+
+
+def create_employee_notification(employee_id, service, kind, title, message, dedupe_key=None, push=True):
+    if dedupe_key and EmployeeNotification.query.filter_by(dedupe_key=dedupe_key).first():
+        return None
+    item = EmployeeNotification(
+        employee_id=employee_id,
+        service_id=service.id if service else None,
+        kind=kind,
+        title=title,
+        message=message,
+        notification_date=(service.service_date if service else local_today()) or local_today(),
+        dedupe_key=dedupe_key,
+    )
+    db.session.add(item)
+    db.session.flush()
+    if push:
+        send_push_to_employee(employee_id, title, message, url=(f"/me/services/{service.id}" if service else "/me"))
+    return item
+
+
+def ensure_daily_service_notifications(target_date=None, push=True):
+    target_date = target_date or local_today()
+    assignments = (
+        ServiceAssignment.query
+        .join(Service, Service.id == ServiceAssignment.service_id)
+        .join(Employee, Employee.id == ServiceAssignment.employee_id)
+        .filter(
+            Employee.active.is_(True),
+            Service.service_date == target_date,
+            Service.status.in_(["scheduled", "in_progress"]),
+        )
+        .all()
+    )
+    created = 0
+    for assignment in assignments:
+        service = assignment.service
+        time_txt = service.service_time.strftime("%H:%M") if (not service.all_day and service.service_time) else "sem horário definido"
+        key = f"daily:{target_date.isoformat()}:service:{service.id}:employee:{assignment.employee_id}"
+        if EmployeeNotification.query.filter_by(dedupe_key=key).first():
+            continue
+        create_employee_notification(
+            assignment.employee_id,
+            service,
+            "daily",
+            "⚡ Serviço para hoje",
+            f"{service.title} · {service.client.name} · {time_txt} · Seu valor: {money(assignment.helper_value)}",
+            dedupe_key=key,
+            push=push,
+        )
+        created += 1
+    tasks = (
+        EmployeeTask.query
+        .join(Employee, Employee.id == EmployeeTask.employee_id)
+        .filter(
+            Employee.active.is_(True),
+            EmployeeTask.task_date == target_date,
+            EmployeeTask.status.in_(["pending", "in_progress"]),
+        )
+        .all()
+    )
+    for task in tasks:
+        key = f"daily:{target_date.isoformat()}:task:{task.id}:employee:{task.employee_id}"
+        if EmployeeNotification.query.filter_by(dedupe_key=key).first():
+            continue
+        title = "🧰 Tarefa para hoje"
+        time_txt = task.task_time.strftime("%H:%M") if task.task_time else "sem horário definido"
+        message = f"{task.title} · {time_txt}"
+        item = EmployeeNotification(
+            employee_id=task.employee_id,
+            service_id=task.service_id,
+            kind="task",
+            title=title,
+            message=message,
+            notification_date=target_date,
+            dedupe_key=key,
+        )
+        db.session.add(item)
+        db.session.flush()
+        if push:
+            send_push_to_employee(task.employee_id, title, message, url="/me")
+        created += 1
+
+    if created:
+        db.session.commit()
+    return created
 
 
 def allowed_image(filename):
@@ -455,6 +674,62 @@ def wa_filter(v):
     return "55" + digits
 
 
+def migrate_schema():
+    inspector = sa_inspect(db.engine)
+    table_names = set(inspector.get_table_names())
+
+    if "quote" in table_names:
+        quote_cols = {c["name"] for c in inspector.get_columns("quote")}
+        additions = {
+            "guest_name": "VARCHAR(140) DEFAULT ''",
+            "guest_phone": "VARCHAR(40) DEFAULT ''",
+            "guest_address": "VARCHAR(255) DEFAULT ''",
+            "guest_city": "VARCHAR(120) DEFAULT ''",
+        }
+        with db.engine.begin() as conn:
+            for name, ddl in additions.items():
+                if name not in quote_cols:
+                    conn.execute(sql_text(f"ALTER TABLE quote ADD COLUMN {name} {ddl}"))
+
+    if "service_assignment" in table_names:
+        assignment_cols = {c["name"] for c in inspector.get_columns("service_assignment")}
+        if "helper_value" not in assignment_cols:
+            with db.engine.begin() as conn:
+                conn.execute(sql_text("ALTER TABLE service_assignment ADD COLUMN helper_value NUMERIC(12,2) DEFAULT 0"))
+
+
+_scheduler = None
+_scheduler_lock = threading.Lock()
+
+
+def start_daily_notification_scheduler():
+    global _scheduler
+    with _scheduler_lock:
+        if _scheduler is not None:
+            return
+        scheduler = BackgroundScheduler(timezone="America/Sao_Paulo")
+
+        def morning_job():
+            with app.app_context():
+                try:
+                    ensure_daily_service_notifications(local_today(), push=True)
+                except Exception as exc:
+                    app.logger.warning("Falha ao gerar notificações diárias: %s", exc)
+
+        scheduler.add_job(
+            morning_job,
+            "cron",
+            hour=int(os.getenv("HELPER_NOTIFICATION_HOUR", "7")),
+            minute=int(os.getenv("HELPER_NOTIFICATION_MINUTE", "0")),
+            id="helper_daily_notifications",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.start()
+        _scheduler = scheduler
+
+
 def get_settings():
     settings = db.session.get(AppSettings, 1)
     if not settings:
@@ -522,7 +797,7 @@ def restrict_employee_access():
     if not session.get("employee_id"):
         return None
     endpoint = request.endpoint or ""
-    allowed = {"static", "login", "logout", "health"}
+    allowed = {"static", "login", "logout", "health", "service_worker"}
     if endpoint in allowed or endpoint.startswith("helper_"):
         return None
     return redirect(url_for("helper_dashboard"))
@@ -681,7 +956,7 @@ def dashboard():
 @login_required
 def clients():
     q = request.args.get("q", "").strip()
-    query = Client.query
+    query = Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME)
     if q:
         like = f"%{q}%"
         query = query.filter(or_(Client.name.ilike(like), Client.phone.ilike(like), Client.cpf_cnpj.ilike(like), Client.city.ilike(like)))
@@ -800,16 +1075,21 @@ def services():
 @app.route("/services/new", methods=["GET", "POST"])
 @login_required
 def service_new():
-    clients_list = Client.query.order_by(Client.name).all()
+    clients_list = Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all()
     employees_list = Employee.query.filter_by(active=True).order_by(Employee.name).all()
     selected_client = request.args.get("client_id", type=int)
     selected_date = parse_date(request.args.get("date"), date.today())
     if request.method == "POST":
         client_id = request.form.get("client_id", type=int)
         client = Client.query.get(client_id) if client_id else None
-        if not client:
+        if not client or client.name == SYSTEM_QUOTE_CLIENT_NAME:
             flash("Selecione um cliente.", "error")
-            return render_template("service_form.html", service=None, clients=clients_list, employees=employees_list, selected_client=client_id, selected_date=selected_date, assigned_employee_id=request.form.get("employee_id", type=int))
+            return render_template(
+                "service_form.html", service=None, clients=clients_list, employees=employees_list,
+                selected_client=client_id, selected_date=selected_date,
+                assigned_employee_id=request.form.get("employee_id", type=int),
+                assigned_employee_value=decimal_or_zero(request.form.get("helper_value")),
+            )
         all_day = request.form.get("all_day") == "1"
         service = Service(
             client_id=client.id,
@@ -831,19 +1111,48 @@ def service_new():
         )
         if not service.title:
             flash("Informe o serviço.", "error")
-            return render_template("service_form.html", service=service, clients=clients_list, employees=employees_list, selected_client=client_id, selected_date=selected_date, assigned_employee_id=request.form.get("employee_id", type=int))
+            return render_template(
+                "service_form.html", service=service, clients=clients_list, employees=employees_list,
+                selected_client=client_id, selected_date=selected_date,
+                assigned_employee_id=request.form.get("employee_id", type=int),
+                assigned_employee_value=decimal_or_zero(request.form.get("helper_value")),
+            )
         sync_service_total(service)
         db.session.add(service)
         db.session.flush()
         ensure_income_entry(service)
         employee_id = request.form.get("employee_id", type=int)
         employee = db.session.get(Employee, employee_id) if employee_id else None
+        assignment = None
         if employee and employee.active:
-            db.session.add(ServiceAssignment(service_id=service.id, employee_id=employee.id))
+            assignment = ServiceAssignment(
+                service_id=service.id,
+                employee_id=employee.id,
+                helper_value=decimal_or_zero(request.form.get("helper_value")),
+            )
+            db.session.add(assignment)
         db.session.commit()
+
+        if assignment:
+            time_txt = service.service_time.strftime("%H:%M") if (not service.all_day and service.service_time) else "sem horário definido"
+            create_employee_notification(
+                employee.id,
+                service,
+                "assignment",
+                "⚡ Novo serviço atribuído",
+                f"{service.title} · {service.client.name} · {service.service_date.strftime('%d/%m/%Y')} · {time_txt} · Seu valor: {money(assignment.helper_value)}",
+                dedupe_key=f"assigned:service:{service.id}:employee:{employee.id}",
+                push=True,
+            )
+            db.session.commit()
+
         flash("Serviço agendado.", "success")
         return redirect(url_for("service_detail", service_id=service.id))
-    return render_template("service_form.html", service=None, clients=clients_list, employees=employees_list, selected_client=selected_client, selected_date=selected_date, assigned_employee_id=None)
+    return render_template(
+        "service_form.html", service=None, clients=clients_list, employees=employees_list,
+        selected_client=selected_client, selected_date=selected_date,
+        assigned_employee_id=None, assigned_employee_value=Decimal("0"),
+    )
 
 
 @app.route("/services/<int:service_id>")
@@ -875,22 +1184,38 @@ def service_detail(service_id):
 @login_required
 def service_edit(service_id):
     service = Service.query.get_or_404(service_id)
-    clients_list = Client.query.order_by(Client.name).all()
+    clients_list = Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all()
     employees_list = Employee.query.filter_by(active=True).order_by(Employee.name).all()
+    current_assignment = ServiceAssignment.query.filter_by(service_id=service.id).first()
+
     if request.method == "POST":
         client_id = request.form.get("client_id", type=int)
         client = db.session.get(Client, client_id) if client_id else None
-        if not client:
+        if not client or client.name == SYSTEM_QUOTE_CLIENT_NAME:
             flash("Selecione um cliente.", "error")
-            assignment = ServiceAssignment.query.filter_by(service_id=service.id).first()
-            return render_template("service_form.html", service=service, clients=clients_list, employees=employees_list, selected_client=None, selected_date=service.service_date, assigned_employee_id=assignment.employee_id if assignment else None)
+            return render_template(
+                "service_form.html", service=service, clients=clients_list, employees=employees_list,
+                selected_client=None, selected_date=service.service_date,
+                assigned_employee_id=current_assignment.employee_id if current_assignment else None,
+                assigned_employee_value=current_assignment.helper_value if current_assignment else Decimal("0"),
+            )
+
+        old_employee_id = current_assignment.employee_id if current_assignment else None
+        old_helper_value = Decimal(current_assignment.helper_value or 0) if current_assignment else Decimal('0')
+        old_date = service.service_date
+        old_time = service.service_time
+        old_all_day = service.all_day
+        old_title = service.title
+        old_client_id = service.client_id
+        old_address = service.address
+
         service.client_id = client.id
         service.title = request.form.get("title", "").strip()
         service.service_date = parse_date(request.form.get("service_date"), service.service_date)
         service.all_day = request.form.get("all_day") == "1"
         service.service_time = None if service.all_day else parse_time(request.form.get("service_time"))
         service.description = request.form.get("description", "").strip()
-        service.address = request.form.get("address", "").strip()
+        service.address = request.form.get("address", "").strip() or client.address
         service.status = request.form.get("status", service.status)
         service.charge_type = request.form.get("charge_type", service.charge_type)
         service.hourly_rate = decimal_or_zero(request.form.get("hourly_rate"))
@@ -902,16 +1227,55 @@ def service_edit(service_id):
         service.notes = request.form.get("notes", "").strip()
         sync_service_total(service)
         ensure_income_entry(service)
+
         ServiceAssignment.query.filter_by(service_id=service.id).delete(synchronize_session=False)
         employee_id = request.form.get("employee_id", type=int)
         employee = db.session.get(Employee, employee_id) if employee_id else None
+        new_assignment = None
         if employee and employee.active:
-            db.session.add(ServiceAssignment(service_id=service.id, employee_id=employee.id))
+            new_assignment = ServiceAssignment(
+                service_id=service.id,
+                employee_id=employee.id,
+                helper_value=decimal_or_zero(request.form.get("helper_value")),
+            )
+            db.session.add(new_assignment)
         db.session.commit()
+
+        if new_assignment:
+            schedule_changed = (
+                old_date != service.service_date or old_time != service.service_time or
+                old_all_day != service.all_day or old_title != service.title or
+                old_client_id != service.client_id or old_address != service.address or
+                old_helper_value != Decimal(new_assignment.helper_value or 0)
+            )
+            if old_employee_id != employee.id:
+                notify_title = "⚡ Novo serviço atribuído"
+                notify_msg = f"{service.title} · {service.client.name} · {service.service_date.strftime('%d/%m/%Y')} · Seu valor: {money(new_assignment.helper_value)}"
+                notify_key = f"assigned:service:{service.id}:employee:{employee.id}"
+            elif schedule_changed:
+                notify_title = "🔄 Serviço atualizado"
+                time_txt = service.service_time.strftime("%H:%M") if (not service.all_day and service.service_time) else "sem horário definido"
+                notify_msg = f"{service.title} · {service.service_date.strftime('%d/%m/%Y')} · {time_txt} · Seu valor: {money(new_assignment.helper_value)}"
+                notify_key = f"updated:service:{service.id}:employee:{employee.id}:{int(datetime.utcnow().timestamp())}"
+            else:
+                notify_title = notify_msg = notify_key = None
+
+            if notify_title:
+                create_employee_notification(
+                    employee.id, service, "assignment",
+                    notify_title, notify_msg, dedupe_key=notify_key, push=True,
+                )
+                db.session.commit()
+
         flash("Serviço atualizado.", "success")
         return redirect(url_for("service_detail", service_id=service.id))
-    assignment = ServiceAssignment.query.filter_by(service_id=service.id).first()
-    return render_template("service_form.html", service=service, clients=clients_list, employees=employees_list, selected_client=service.client_id, selected_date=service.service_date, assigned_employee_id=assignment.employee_id if assignment else None)
+
+    return render_template(
+        "service_form.html", service=service, clients=clients_list, employees=employees_list,
+        selected_client=service.client_id, selected_date=service.service_date,
+        assigned_employee_id=current_assignment.employee_id if current_assignment else None,
+        assigned_employee_value=current_assignment.helper_value if current_assignment else Decimal("0"),
+    )
 
 
 @app.route("/services/<int:service_id>/delete", methods=["POST"])
@@ -924,6 +1288,7 @@ def service_delete(service_id):
     EmployeeTask.query.filter_by(service_id=service.id).update({EmployeeTask.service_id: None}, synchronize_session=False)
     EmployeeTimeSession.query.filter_by(service_id=service.id).delete(synchronize_session=False)
     ServiceAssignment.query.filter_by(service_id=service.id).delete(synchronize_session=False)
+    EmployeeNotification.query.filter_by(service_id=service.id).delete(synchronize_session=False)
     # Remove uploaded photos/signature from disk.
     for photo in list(service.photos):
         delete_upload(photo.filename)
@@ -1268,25 +1633,79 @@ def quotes():
     query = Quote.query.join(Client)
     if q:
         like = f"%{q}%"
-        query = query.filter(or_(Quote.title.ilike(like), Client.name.ilike(like)))
+        query = query.filter(or_(
+            Quote.title.ilike(like),
+            Client.name.ilike(like),
+            Quote.guest_name.ilike(like),
+            Quote.guest_phone.ilike(like),
+        ))
     if status:
         query = query.filter(Quote.status == status)
     items = query.order_by(Quote.quote_date.desc(), Quote.id.desc()).all()
     return render_template("quotes.html", quotes=items, q=q, status=status)
 
 
+def quote_customer_from_form(existing_quote=None):
+    mode = request.form.get("customer_mode", "registered")
+    client_id = request.form.get("client_id", type=int)
+    guest_name = request.form.get("guest_name", "").strip()
+    guest_phone = request.form.get("guest_phone", "").strip()
+    guest_address = request.form.get("guest_address", "").strip()
+    guest_city = request.form.get("guest_city", "").strip()
+
+    if mode == "guest" or not client_id:
+        if not guest_name:
+            return None, {"error": "Informe o nome do cliente do orçamento."}
+        walkin = get_quote_walkin_client()
+        return walkin.id, {
+            "guest_name": guest_name,
+            "guest_phone": guest_phone,
+            "guest_address": guest_address,
+            "guest_city": guest_city,
+        }
+
+    client = db.session.get(Client, client_id)
+    if not client or client.name == SYSTEM_QUOTE_CLIENT_NAME:
+        return None, {"error": "Selecione um cliente cadastrado ou use Cliente não cadastrado."}
+    return client.id, {
+        "guest_name": "",
+        "guest_phone": "",
+        "guest_address": "",
+        "guest_city": "",
+    }
+
+
 @app.route("/quotes/new", methods=["GET", "POST"])
 @login_required
 def quote_new():
-    clients_list = Client.query.order_by(Client.name).all()
+    clients_list = Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all()
     selected_client = request.args.get("client_id", type=int)
     if request.method == "POST":
-        client_id = request.form.get("client_id", type=int)
-        if not Client.query.get(client_id):
-            flash("Selecione um cliente.", "error")
-            return render_template("quote_form.html", quote=None, clients=clients_list, selected_client=client_id)
+        client_id, customer_data = quote_customer_from_form()
+        if not client_id:
+            flash(customer_data["error"], "error")
+            draft = Quote(
+                client_id=get_quote_walkin_client().id,
+                guest_name=request.form.get("guest_name", "").strip(),
+                guest_phone=request.form.get("guest_phone", "").strip(),
+                guest_address=request.form.get("guest_address", "").strip(),
+                guest_city=request.form.get("guest_city", "").strip(),
+                title=request.form.get("title", "").strip(),
+                quote_date=parse_date(request.form.get("quote_date"), date.today()),
+                valid_until=parse_date(request.form.get("valid_until")),
+                status=request.form.get("status", "draft"),
+                description=request.form.get("description", "").strip(),
+                discount=decimal_or_zero(request.form.get("discount")),
+                notes=request.form.get("notes", "").strip(),
+            )
+            return render_template(
+                "quote_form.html", quote=draft, clients=clients_list,
+                selected_client=request.form.get("client_id", type=int),
+                customer_mode=request.form.get("customer_mode", "guest"),
+            )
         quote = Quote(
             client_id=client_id,
+            **customer_data,
             title=request.form.get("title", "").strip(),
             quote_date=parse_date(request.form.get("quote_date"), date.today()),
             valid_until=parse_date(request.form.get("valid_until")),
@@ -1297,7 +1716,11 @@ def quote_new():
         )
         if not quote.title:
             flash("Informe o título do orçamento.", "error")
-            return render_template("quote_form.html", quote=quote, clients=clients_list, selected_client=client_id)
+            return render_template(
+                "quote_form.html", quote=quote, clients=clients_list,
+                selected_client=request.form.get("client_id", type=int),
+                customer_mode=request.form.get("customer_mode", "registered"),
+            )
         db.session.add(quote)
         db.session.flush()
         for item in parse_quote_items():
@@ -1307,7 +1730,11 @@ def quote_new():
         db.session.commit()
         flash("Orçamento criado.", "success")
         return redirect(url_for("quote_detail", quote_id=quote.id))
-    return render_template("quote_form.html", quote=None, clients=clients_list, selected_client=selected_client)
+    return render_template(
+        "quote_form.html", quote=None, clients=clients_list,
+        selected_client=selected_client,
+        customer_mode="registered" if selected_client else "guest",
+    )
 
 
 @app.route("/quotes/<int:quote_id>")
@@ -1321,14 +1748,21 @@ def quote_detail(quote_id):
 @login_required
 def quote_edit(quote_id):
     quote = Quote.query.get_or_404(quote_id)
-    clients_list = Client.query.order_by(Client.name).all()
+    clients_list = Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all()
     if request.method == "POST":
-        client_id = request.form.get("client_id", type=int)
-        client = db.session.get(Client, client_id) if client_id else None
-        if not client:
-            flash("Selecione um cliente.", "error")
-            return render_template("quote_form.html", quote=quote, clients=clients_list, selected_client=None)
+        client_id, customer_data = quote_customer_from_form(quote)
+        if not client_id:
+            flash(customer_data["error"], "error")
+            return render_template(
+                "quote_form.html", quote=quote, clients=clients_list,
+                selected_client=request.form.get("client_id", type=int),
+                customer_mode=request.form.get("customer_mode", "guest"),
+            )
         quote.client_id = client_id
+        quote.guest_name = customer_data["guest_name"]
+        quote.guest_phone = customer_data["guest_phone"]
+        quote.guest_address = customer_data["guest_address"]
+        quote.guest_city = customer_data["guest_city"]
         quote.title = request.form.get("title", "").strip()
         quote.quote_date = parse_date(request.form.get("quote_date"), quote.quote_date)
         quote.valid_until = parse_date(request.form.get("valid_until"))
@@ -1344,7 +1778,11 @@ def quote_edit(quote_id):
         db.session.commit()
         flash("Orçamento atualizado.", "success")
         return redirect(url_for("quote_detail", quote_id=quote.id))
-    return render_template("quote_form.html", quote=quote, clients=clients_list, selected_client=quote.client_id)
+    return render_template(
+        "quote_form.html", quote=quote, clients=clients_list,
+        selected_client=(None if quote.is_guest else quote.client_id),
+        customer_mode=("guest" if quote.is_guest else "registered"),
+    )
 
 
 @app.route("/quotes/<int:quote_id>/status", methods=["POST"])
@@ -1366,14 +1804,28 @@ def quote_convert(quote_id):
     quote = Quote.query.get_or_404(quote_id)
     if quote.converted_service_id:
         return redirect(url_for("service_detail", service_id=quote.converted_service_id))
+
+    client = quote.client
+    if quote.is_guest:
+        client = Client(
+            name=quote.guest_name,
+            phone=quote.guest_phone,
+            address=quote.guest_address,
+            city=quote.guest_city,
+            notes=f"Cadastrado automaticamente ao aprovar o orçamento #{quote.id}.",
+        )
+        db.session.add(client)
+        db.session.flush()
+        quote.client_id = client.id
+
     service_date = parse_date(request.form.get("service_date"), date.today())
     service = Service(
-        client_id=quote.client_id,
+        client_id=client.id,
         title=quote.title,
         service_date=service_date,
         all_day=True,
         description=quote.description,
-        address=quote.client.address,
+        address=quote.customer_address or client.address,
         status="scheduled",
         charge_type="fixed",
         labor_value=quote.labor_value,
@@ -1388,7 +1840,7 @@ def quote_convert(quote_id):
     quote.converted_service_id = service.id
     ensure_income_entry(service)
     db.session.commit()
-    flash("Orçamento aprovado e transformado em serviço.", "success")
+    flash("Orçamento aprovado e transformado em serviço. O cliente foi cadastrado automaticamente." if quote.is_guest else "Orçamento aprovado e transformado em serviço.", "success")
     return redirect(url_for("service_detail", service_id=service.id))
 
 
@@ -1433,7 +1885,7 @@ def finance():
 @app.route("/finance/new", methods=["GET", "POST"])
 @login_required
 def finance_new():
-    clients_list = Client.query.order_by(Client.name).all()
+    clients_list = Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all()
     if request.method == "POST":
         entry = FinanceEntry(
             type=request.form.get("type", "expense"),
@@ -1467,7 +1919,7 @@ def finance_edit(entry_id):
     if team_expense:
         flash("Esse lançamento pertence ao controle da equipe. Edite pelo cadastro do ajudante para manter tudo sincronizado.", "error")
         return redirect(url_for("employee_detail", employee_id=team_expense.employee_id))
-    clients_list = Client.query.order_by(Client.name).all()
+    clients_list = Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all()
     if request.method == "POST":
         entry.type = request.form.get("type", entry.type)
         entry.client_id = request.form.get("client_id", type=int)
@@ -1721,7 +2173,7 @@ def employee_detail(employee_id):
     paid_expenses = sum((Decimal(x.amount or 0) for x in expenses if x.status == "paid"), Decimal("0"))
     pending_expenses = sum((Decimal(x.amount or 0) for x in expenses if x.status == "pending"), Decimal("0"))
     elapsed = employee_elapsed_seconds(employee.id, start, end)
-    return render_template("employee_detail.html", employee=employee, tasks=tasks, assignments=assignments, expenses=expenses, total_expenses=total_expenses, paid_expenses=paid_expenses, pending_expenses=pending_expenses, elapsed=elapsed, start=start, end=end, services=Service.query.order_by(Service.service_date.desc()).limit(80).all(), clients=Client.query.order_by(Client.name).all())
+    return render_template("employee_detail.html", employee=employee, tasks=tasks, assignments=assignments, expenses=expenses, total_expenses=total_expenses, paid_expenses=paid_expenses, pending_expenses=pending_expenses, elapsed=elapsed, start=start, end=end, services=Service.query.order_by(Service.service_date.desc()).limit(80).all(), clients=Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all())
 
 
 @app.route("/team/<int:employee_id>/edit", methods=["GET", "POST"])
@@ -1764,6 +2216,8 @@ def employee_delete(employee_id):
     finance_ids = [x.finance_entry_id for x in employee.expenses if x.finance_entry_id]
     if finance_ids:
         FinanceEntry.query.filter(FinanceEntry.id.in_(finance_ids)).delete(synchronize_session=False)
+    EmployeeNotification.query.filter_by(employee_id=employee.id).delete(synchronize_session=False)
+    PushSubscription.query.filter_by(employee_id=employee.id).delete(synchronize_session=False)
     db.session.delete(employee)
     db.session.commit()
     flash("Ajudante e os registros vinculados a ele foram excluídos.", "success")
@@ -1787,10 +2241,25 @@ def team_task_new():
             if task.title:
                 db.session.add(task)
                 db.session.commit()
+                title = "🧰 Nova tarefa"
+                time_txt = task.task_time.strftime("%H:%M") if task.task_time else "sem horário definido"
+                message = f"{task.title} · {task.task_date.strftime('%d/%m/%Y')} · {time_txt}"
+                notice = EmployeeNotification(
+                    employee_id=employee.id,
+                    service_id=task.service_id,
+                    kind="task",
+                    title=title,
+                    message=message,
+                    notification_date=task.task_date,
+                    dedupe_key=f"assigned:task:{task.id}:employee:{employee.id}",
+                )
+                db.session.add(notice)
+                db.session.commit()
+                send_push_to_employee(employee.id, title, message, url="/me")
                 flash("Tarefa enviada para o ajudante.", "success")
                 return redirect(url_for("employee_detail", employee_id=employee.id))
             flash("Informe a tarefa.", "error")
-    return render_template("task_form.html", employees=Employee.query.filter_by(active=True).order_by(Employee.name).all(), clients=Client.query.order_by(Client.name).all(), services=Service.query.order_by(Service.service_date.desc()).limit(100).all(), employee_id=employee_id, service_id=service_id, selected_service=selected_service)
+    return render_template("task_form.html", employees=Employee.query.filter_by(active=True).order_by(Employee.name).all(), clients=Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all(), services=Service.query.order_by(Service.service_date.desc()).limit(100).all(), employee_id=employee_id, service_id=service_id, selected_service=selected_service)
 
 
 @app.route("/team/tasks/<int:task_id>/status", methods=["POST"])
@@ -1866,18 +2335,152 @@ def employee_expense_delete(expense_id):
 
 
 # -------------------- Área do ajudante --------------------
+@app.route("/sw.js")
+def service_worker():
+    response = send_from_directory(os.path.join(BASE_DIR, "static"), "sw.js")
+    response.headers["Service-Worker-Allowed"] = "/"
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.route("/me")
 @login_required
 def helper_dashboard():
     employee = current_employee()
     if not employee:
         return redirect(url_for("dashboard"))
-    today_ = date.today()
-    tasks = EmployeeTask.query.filter(EmployeeTask.employee_id == employee.id, EmployeeTask.status != "cancelled", EmployeeTask.task_date <= today_ + timedelta(days=7)).order_by(EmployeeTask.task_date, EmployeeTask.task_time.asc().nullslast(), EmployeeTask.id).all()
-    assignments = ServiceAssignment.query.filter_by(employee_id=employee.id).join(Service, Service.id == ServiceAssignment.service_id).filter(Service.status != "cancelled", Service.service_date >= today_ - timedelta(days=1), Service.service_date <= today_ + timedelta(days=14)).order_by(Service.service_date, Service.service_time.asc().nullslast()).all()
+    today_ = local_today()
+
+    # Garante o lembrete do dia mesmo que o agendador tenha sido reiniciado.
+    try:
+        ensure_daily_service_notifications(today_, push=True)
+    except Exception as exc:
+        app.logger.warning("Falha ao verificar notificações do ajudante: %s", exc)
+
+    tasks = EmployeeTask.query.filter(
+        EmployeeTask.employee_id == employee.id,
+        EmployeeTask.status != "cancelled",
+        EmployeeTask.task_date <= today_ + timedelta(days=7)
+    ).order_by(EmployeeTask.task_date, EmployeeTask.task_time.asc().nullslast(), EmployeeTask.id).all()
+
+    assignments = (
+        ServiceAssignment.query.filter_by(employee_id=employee.id)
+        .join(Service, Service.id == ServiceAssignment.service_id)
+        .filter(
+            Service.status != "cancelled",
+            Service.service_date >= today_ - timedelta(days=1),
+            Service.service_date <= today_ + timedelta(days=14)
+        )
+        .order_by(Service.service_date, Service.service_time.asc().nullslast())
+        .all()
+    )
     running = EmployeeTimeSession.query.filter_by(employee_id=employee.id, ended_at=None).order_by(EmployeeTimeSession.started_at.desc()).first()
     today_seconds = employee_elapsed_seconds(employee.id, today_, today_)
-    return render_template("helper_dashboard.html", employee=employee, tasks=tasks, assignments=assignments, running=running, today_seconds=today_seconds)
+
+    month_start = today_.replace(day=1)
+    next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    month_done_value = db.session.query(func.coalesce(func.sum(ServiceAssignment.helper_value), 0)).join(
+        Service, Service.id == ServiceAssignment.service_id
+    ).filter(
+        ServiceAssignment.employee_id == employee.id,
+        Service.status == "completed",
+        Service.service_date >= month_start,
+        Service.service_date < next_month,
+    ).scalar() or 0
+
+    today_value = db.session.query(func.coalesce(func.sum(ServiceAssignment.helper_value), 0)).join(
+        Service, Service.id == ServiceAssignment.service_id
+    ).filter(
+        ServiceAssignment.employee_id == employee.id,
+        Service.status != "cancelled",
+        Service.service_date == today_,
+    ).scalar() or 0
+
+    unread_notifications = EmployeeNotification.query.filter_by(
+        employee_id=employee.id, read_at=None
+    ).order_by(EmployeeNotification.created_at.desc()).limit(20).all()
+
+    return render_template(
+        "helper_dashboard.html",
+        employee=employee,
+        tasks=tasks,
+        assignments=assignments,
+        running=running,
+        today_seconds=today_seconds,
+        month_done_value=month_done_value,
+        today_value=today_value,
+        unread_notifications=unread_notifications,
+        vapid_public_key=vapid_public_key(),
+    )
+
+
+@app.route("/me/push/subscribe", methods=["POST"])
+@login_required
+def helper_push_subscribe():
+    employee = current_employee()
+    if not employee:
+        abort(403)
+    data = request.get_json(silent=True) or {}
+    endpoint = (data.get("endpoint") or "").strip()
+    keys = data.get("keys") or {}
+    p256dh = (keys.get("p256dh") or "").strip()
+    auth = (keys.get("auth") or "").strip()
+    if not endpoint or not p256dh or not auth:
+        return jsonify({"ok": False, "error": "Assinatura inválida"}), 400
+    sub = PushSubscription.query.filter_by(endpoint=endpoint).first()
+    if not sub:
+        sub = PushSubscription(employee_id=employee.id, endpoint=endpoint, p256dh=p256dh, auth=auth)
+        db.session.add(sub)
+    else:
+        sub.employee_id = employee.id
+        sub.p256dh = p256dh
+        sub.auth = auth
+        sub.updated_at = datetime.utcnow()
+    db.session.commit()
+
+    # Ao ativar no celular, entrega também os avisos de hoje que já existiam.
+    todays = EmployeeNotification.query.filter(
+        EmployeeNotification.employee_id == employee.id,
+        EmployeeNotification.read_at.is_(None),
+        EmployeeNotification.notification_date == local_today(),
+    ).order_by(EmployeeNotification.created_at.asc()).limit(5).all()
+    for notice in todays:
+        try:
+            webpush(
+                subscription_info={
+                    "endpoint": sub.endpoint,
+                    "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
+                },
+                data=json.dumps({
+                    "title": notice.title,
+                    "body": notice.message,
+                    "url": f"/me/services/{notice.service_id}" if notice.service_id else "/me",
+                }),
+                vapid_private_key=VAPID_PRIVATE_PATH,
+                vapid_claims={"sub": "mailto:notificacoes@guilherme-eletrica.local"},
+                timeout=10,
+            )
+        except Exception:
+            pass
+
+    return jsonify({"ok": True})
+
+
+@app.route("/me/notifications/read", methods=["POST"])
+@login_required
+def helper_notifications_read():
+    employee = current_employee()
+    if not employee:
+        abort(403)
+    data = request.get_json(silent=True) or {}
+    ids = data.get("ids") or []
+    query = EmployeeNotification.query.filter_by(employee_id=employee.id, read_at=None)
+    if ids:
+        query = query.filter(EmployeeNotification.id.in_([int(x) for x in ids if str(x).isdigit()]))
+    for item in query.all():
+        item.read_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({"ok": True})
 
 
 @app.route("/me/tasks/<int:task_id>/status", methods=["POST"])
@@ -1929,7 +2532,10 @@ def helper_task_timer_pause(task_id):
 @login_required
 def helper_service(service_id):
     employee = current_employee()
-    assignment = ServiceAssignment.query.filter_by(service_id=service_id, employee_id=employee.id if employee else -1).first_or_404()
+    assignment = ServiceAssignment.query.filter_by(
+        service_id=service_id,
+        employee_id=employee.id if employee else -1
+    ).first_or_404()
     service = assignment.service
     tasks = EmployeeTask.query.filter_by(employee_id=employee.id, service_id=service.id).order_by(EmployeeTask.task_date, EmployeeTask.id).all()
     running = employee_running_session(employee.id, service_id=service.id)
@@ -1937,7 +2543,15 @@ def helper_service(service_id):
     now_utc = datetime.utcnow()
     for item in EmployeeTimeSession.query.filter_by(employee_id=employee.id, service_id=service.id).all():
         elapsed += max(0, int(((item.ended_at or now_utc) - item.started_at).total_seconds()))
-    return render_template("helper_service.html", employee=employee, service=service, tasks=tasks, running=running, elapsed=elapsed)
+    return render_template(
+        "helper_service.html",
+        employee=employee,
+        service=service,
+        assignment=assignment,
+        tasks=tasks,
+        running=running,
+        elapsed=elapsed,
+    )
 
 
 @app.route("/me/services/<int:service_id>/timer/start", methods=["POST"])
@@ -2069,6 +2683,10 @@ def health():
 
 with app.app_context():
     db.create_all()
+    migrate_schema()
+    ensure_vapid_keys()
+
+start_daily_notification_scheduler()
 
 
 if __name__ == "__main__":

@@ -147,3 +147,16 @@
   .client-results{position:fixed;left:12px;right:12px;top:auto;bottom:calc(78px + env(safe-area-inset-bottom));max-height:45vh;border-radius:16px}.client-result{padding:14px}.client-result strong{font-size:15px}
   .more-options summary{align-items:flex-start}.more-options summary span{display:none}.photo-columns{grid-template-columns:1fr}.photo-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.upload-inline{grid-template-columns:1fr}.upload-inline .btn{width:100%}.profit-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.signature-canvas{height:210px}
 }
+
+/* 26/08/2026 - orçamento avulso + notificações + valor do ajudante */
+.segmented-choice{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.choice-card{display:flex;align-items:center;gap:10px;padding:14px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.025);cursor:pointer;font-weight:800}
+.choice-card input{width:18px;height:18px;accent-color:#ffc43d}
+.choice-card:has(input:checked){border-color:#ffc43d;background:rgba(255,196,61,.08)}
+.helper-notify-bar{border-color:rgba(255,196,61,.25)}
+.notification-row{align-items:center}
+@media(max-width:700px){
+  .segmented-choice{grid-template-columns:1fr}
+  .helper-stats{grid-template-columns:1fr 1fr!important}
+  .notification-row{align-items:flex-start}
+}

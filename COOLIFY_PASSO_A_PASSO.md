@@ -41,3 +41,13 @@ Dentro do sistema: **Configurações > Baixar backup agora**.
 
 ## Fotos e assinaturas
 As fotos e assinaturas ficam dentro de `/data/uploads`. Por isso, mantenha o volume persistente montado em `/data`; assim esses arquivos também sobrevivem aos redeploys.
+
+## Notificações do ajudante
+A versão atual usa notificações push. No Coolify, mantenha HTTPS habilitado no domínio.
+
+Variáveis opcionais:
+- `APP_TIMEZONE=America/Sao_Paulo`
+- `HELPER_NOTIFICATION_HOUR=7`
+- `HELPER_NOTIFICATION_MINUTE=0`
+
+O ajudante precisa entrar no sistema pelo celular e tocar em **Ativar notificações** uma vez. No iPhone, instale o sistema na Tela de Início antes de ativar.

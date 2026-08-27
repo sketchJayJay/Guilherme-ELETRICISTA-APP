@@ -1,15 +1,51 @@
 {% extends 'base.html' %}{% block content %}
-<div class="page-head"><div><h1>{{ 'Editar orçamento' if quote else 'Novo orçamento' }}</h1><p>Adicione mão de obra e materiais item por item.</p></div></div>
+<div class="page-head"><div><h1>{{ 'Editar orçamento' if quote and quote.id else 'Novo orçamento' }}</h1><p>Você pode fazer orçamento para cliente cadastrado ou para alguém que ainda não está no sistema.</p></div></div>
 <form method="post" class="card"><div class="card-body form-grid">
-<div class="field full"><label>Cliente *</label><div class="client-picker" data-client-picker><input class="input" type="search" data-client-search autocomplete="off" placeholder="Digite nome ou telefone"><select class="client-source" name="client_id" data-client-select><option value="">Selecione...</option>{% for c in clients %}<option value="{{ c.id }}" data-name="{{ c.name }}" data-phone="{{ c.phone or '' }}" {% if selected_client==c.id %}selected{% endif %}>{{ c.name }}{% if c.phone %} · {{ c.phone }}{% endif %}</option>{% endfor %}</select><div class="client-results" data-client-results></div></div></div>
+
+<div class="field full">
+  <label>Para quem é o orçamento?</label>
+  <div class="segmented-choice">
+    <label class="choice-card"><input type="radio" name="customer_mode" value="registered" {% if customer_mode=='registered' %}checked{% endif %} onchange="toggleQuoteCustomer()"><span>👤 Cliente cadastrado</span></label>
+    <label class="choice-card"><input type="radio" name="customer_mode" value="guest" {% if customer_mode!='registered' %}checked{% endif %} onchange="toggleQuoteCustomer()"><span>⚡ Cliente não cadastrado</span></label>
+  </div>
+</div>
+
+<div class="field full" id="registeredCustomerBox">
+  <label>Buscar cliente</label>
+  <div class="client-picker" data-client-picker>
+    <input class="input" type="search" data-client-search autocomplete="off" placeholder="Digite nome ou telefone">
+    <select class="client-source" name="client_id" data-client-select>
+      <option value="">Selecione...</option>
+      {% for c in clients %}<option value="{{ c.id }}" data-name="{{ c.name }}" data-phone="{{ c.phone or '' }}" {% if selected_client==c.id %}selected{% endif %}>{{ c.name }}{% if c.phone %} · {{ c.phone }}{% endif %}</option>{% endfor %}
+    </select>
+    <div class="client-results" data-client-results></div>
+  </div>
+</div>
+
+<div class="field full" id="guestCustomerBox">
+  <div class="form-grid">
+    <div class="field"><label>Nome do cliente *</label><input class="input" name="guest_name" value="{{ quote.guest_name if quote else '' }}" placeholder="Nome da pessoa ou empresa"></div>
+    <div class="field"><label>Telefone / WhatsApp</label><input class="input" name="guest_phone" inputmode="tel" value="{{ quote.guest_phone if quote else '' }}" placeholder="(32) 99999-9999"></div>
+    <div class="field full"><label>Endereço</label><input class="input" name="guest_address" value="{{ quote.guest_address if quote else '' }}" placeholder="Rua, número, bairro"></div>
+    <div class="field"><label>Cidade</label><input class="input" name="guest_city" value="{{ quote.guest_city if quote else '' }}"></div>
+    <div class="field full"><div class="help">Esse cliente não entra no cadastro agora. Se o orçamento for aprovado e virar serviço, o sistema cadastra ele automaticamente.</div></div>
+  </div>
+</div>
+
 <div class="field full"><label>Título *</label><input class="input" name="title" required value="{{ quote.title if quote else '' }}" placeholder="Ex.: instalação elétrica da residência"></div>
 <div class="field"><label>Data</label><input class="input" type="date" name="quote_date" value="{{ (quote.quote_date if quote else today).isoformat() }}"></div>
 <div class="field"><label>Validade</label><input class="input" type="date" name="valid_until" value="{{ quote.valid_until.isoformat() if quote and quote.valid_until else '' }}"></div>
 <div class="field"><label>Status</label><select class="select" name="status">{% for k,v in quote_status_labels.items() %}<option value="{{ k }}" {% if (quote.status if quote else 'draft')==k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
 <div class="field"><label>Desconto</label><input class="input" name="discount" value="{{ quote.discount if quote else '0' }}" inputmode="decimal"></div>
 <div class="field full"><label>Descrição geral</label><textarea class="textarea" name="description">{{ quote.description if quote else '' }}</textarea></div>
+
 <div class="field full"><label>Itens do orçamento</label><div id="items">{% if quote and quote.items %}{% for i in quote.items %}<div class="quote-item-row"><div class="field desc"><input class="input" name="item_description[]" value="{{ i.description }}" placeholder="Descrição"></div><div class="field"><select class="select" name="item_category[]"><option value="service" {% if i.category=='service' %}selected{% endif %}>Serviço</option><option value="material" {% if i.category=='material' %}selected{% endif %}>Material</option></select></div><div class="field"><input class="input" name="item_qty[]" value="{{ i.qty }}" placeholder="Qtd"></div><div class="field"><input class="input" name="item_unit[]" value="{{ i.unit }}" placeholder="un"></div><div class="field"><input class="input" name="item_price[]" value="{{ i.unit_price }}" placeholder="Valor"></div><button class="btn danger sm" type="button" onclick="this.parentElement.remove()">×</button></div>{% endfor %}{% else %}<div class="quote-item-row"><div class="field desc"><input class="input" name="item_description[]" placeholder="Descrição"></div><div class="field"><select class="select" name="item_category[]"><option value="service">Serviço</option><option value="material">Material</option></select></div><div class="field"><input class="input" name="item_qty[]" value="1" placeholder="Qtd"></div><div class="field"><input class="input" name="item_unit[]" value="un" placeholder="un"></div><div class="field"><input class="input" name="item_price[]" placeholder="Valor"></div><button class="btn danger sm" type="button" onclick="this.parentElement.remove()">×</button></div>{% endif %}</div><button class="btn sm" type="button" onclick="addItem()">+ Adicionar item</button></div>
 <div class="field full"><label>Observações / condições</label><textarea class="textarea" name="notes">{{ quote.notes if quote else '' }}</textarea></div>
 <div class="field full"><div class="actions"><button class="btn primary" type="submit">Salvar orçamento</button><a class="btn" href="{{ url_for('quotes') }}">Cancelar</a>{% if quote and quote.id %}<button class="btn danger" type="submit" formnovalidate formaction="{{ url_for('quote_delete', quote_id=quote.id) }}" formmethod="post" onclick="return confirmDelete('Excluir definitivamente este orçamento?')">Excluir orçamento</button>{% endif %}</div></div>
 </div></form>
-{% endblock %}{% block scripts %}<script>function addItem(){const d=document.createElement('div');d.className='quote-item-row';d.innerHTML=`<div class="field desc"><input class="input" name="item_description[]" placeholder="Descrição"></div><div class="field"><select class="select" name="item_category[]"><option value="service">Serviço</option><option value="material">Material</option></select></div><div class="field"><input class="input" name="item_qty[]" value="1" placeholder="Qtd"></div><div class="field"><input class="input" name="item_unit[]" value="un" placeholder="un"></div><div class="field"><input class="input" name="item_price[]" placeholder="Valor"></div><button class="btn danger sm" type="button" onclick="this.parentElement.remove()">×</button>`;document.getElementById('items').appendChild(d)}</script>{% endblock %}
+{% endblock %}
+{% block scripts %}<script>
+function addItem(){const d=document.createElement('div');d.className='quote-item-row';d.innerHTML=`<div class="field desc"><input class="input" name="item_description[]" placeholder="Descrição"></div><div class="field"><select class="select" name="item_category[]"><option value="service">Serviço</option><option value="material">Material</option></select></div><div class="field"><input class="input" name="item_qty[]" value="1" placeholder="Qtd"></div><div class="field"><input class="input" name="item_unit[]" value="un" placeholder="un"></div><div class="field"><input class="input" name="item_price[]" placeholder="Valor"></div><button class="btn danger sm" type="button" onclick="this.parentElement.remove()">×</button>`;document.getElementById('items').appendChild(d)}
+function toggleQuoteCustomer(){const mode=document.querySelector('input[name="customer_mode"]:checked')?.value||'guest';document.getElementById('registeredCustomerBox').style.display=mode==='registered'?'grid':'none';document.getElementById('guestCustomerBox').style.display=mode==='guest'?'grid':'none'}
+toggleQuoteCustomer();
+</script>{% endblock %}
