@@ -11,6 +11,7 @@ from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from functools import wraps
 from decimal import Decimal, InvalidOperation
+from xml.sax.saxutils import escape as xml_escape
 
 from flask import (
     Flask, render_template, request, redirect, url_for, flash,
@@ -24,6 +25,12 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
 from pywebpush import webpush, WebPushException
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_RIGHT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DATA_DIR = os.getenv("DATA_DIR", os.path.join(BASE_DIR, "data"))
@@ -462,10 +469,25 @@ def vapid_public_key():
 
 
 def send_push_to_employee(employee_id, title, message, url="/me"):
-    ensure_vapid_keys()
-    subs = PushSubscription.query.filter_by(employee_id=employee_id).all()
+    """Envia push sem nunca derrubar a página se o serviço externo falhar."""
+    try:
+        ensure_vapid_keys()
+    except Exception as exc:
+        app.logger.warning("Não foi possível preparar as chaves de push: %s", exc)
+        return False
+
+    try:
+        subs = PushSubscription.query.filter_by(employee_id=employee_id).all()
+    except Exception as exc:
+        app.logger.warning("Não foi possível carregar inscrições de push: %s", exc)
+        return False
+
+    if not subs:
+        return False
+
     payload = json.dumps({"title": title, "body": message, "url": url})
     stale = []
+    sent = False
     for sub in subs:
         try:
             webpush(
@@ -476,18 +498,42 @@ def send_push_to_employee(employee_id, title, message, url="/me"):
                 data=payload,
                 vapid_private_key=VAPID_PRIVATE_PATH,
                 vapid_claims={"sub": "mailto:notificacoes@guilherme-eletrica.local"},
-                timeout=10,
+                timeout=4,
             )
+            sent = True
         except WebPushException as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             if status in {404, 410}:
                 stale.append(sub)
-        except Exception:
-            continue
+            app.logger.warning("Push falhou para ajudante %s: %s", employee_id, exc)
+        except Exception as exc:
+            app.logger.warning("Push falhou para ajudante %s: %s", employee_id, exc)
+
     if stale:
-        for sub in stale:
-            db.session.delete(sub)
-        db.session.commit()
+        try:
+            for sub in stale:
+                db.session.delete(sub)
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            app.logger.warning("Falha ao limpar inscrições antigas de push: %s", exc)
+    return sent
+
+
+def send_push_async(employee_id, title, message, url="/me"):
+    """Dispara o push fora da requisição para o celular não ficar esperando."""
+    def _worker():
+        with app.app_context():
+            try:
+                send_push_to_employee(employee_id, title, message, url=url)
+            except Exception as exc:
+                app.logger.warning("Falha no push em segundo plano: %s", exc)
+    try:
+        threading.Thread(target=_worker, daemon=True).start()
+        return True
+    except Exception as exc:
+        app.logger.warning("Não foi possível iniciar o push em segundo plano: %s", exc)
+        return False
 
 
 def create_employee_notification(employee_id, service, kind, title, message, dedupe_key=None, push=True):
@@ -1160,6 +1206,7 @@ def service_new():
 def service_detail(service_id):
     service = Service.query.get_or_404(service_id)
     materials = Material.query.order_by(Material.name).all()
+    employees = Employee.query.filter_by(active=True).order_by(Employee.name).all()
     elapsed = service.elapsed_seconds()
     assignments = ServiceAssignment.query.filter_by(service_id=service.id).all()
     helper_expenses = EmployeeExpense.query.filter_by(service_id=service.id).order_by(EmployeeExpense.expense_date.desc()).all()
@@ -1173,7 +1220,7 @@ def service_detail(service_id):
     before_photos = ServicePhoto.query.filter_by(service_id=service.id, kind="before").order_by(ServicePhoto.created_at.desc()).all()
     after_photos = ServicePhoto.query.filter_by(service_id=service.id, kind="after").order_by(ServicePhoto.created_at.desc()).all()
     return render_template(
-        "service_detail.html", service=service, materials=materials, elapsed=elapsed,
+        "service_detail.html", service=service, materials=materials, employees=employees, elapsed=elapsed,
         assignments=assignments, helper_expenses=helper_expenses, helper_cost=helper_cost,
         material_cost=material_cost, linked_expenses=linked_expenses, total_cost=total_cost, profit=profit,
         other_expenses=other_expenses, before_photos=before_photos, after_photos=after_photos
@@ -1276,6 +1323,78 @@ def service_edit(service_id):
         assigned_employee_id=current_assignment.employee_id if current_assignment else None,
         assigned_employee_value=current_assignment.helper_value if current_assignment else Decimal("0"),
     )
+
+
+@app.route("/services/<int:service_id>/assign-helper", methods=["POST"])
+@admin_required
+def service_assign_helper(service_id):
+    """Envia/atribui o serviço ao ajudante e registra um aviso no painel dele."""
+    service = Service.query.get_or_404(service_id)
+    employee_id = request.form.get("employee_id", type=int)
+    employee = db.session.get(Employee, employee_id) if employee_id else None
+    if not employee or not employee.active:
+        flash("Selecione um ajudante ativo.", "error")
+        return redirect(url_for("service_detail", service_id=service.id) + "#enviar-ajudante")
+
+    helper_value = decimal_or_zero(request.form.get("helper_value"))
+    assignment = ServiceAssignment.query.filter_by(service_id=service.id, employee_id=employee.id).first()
+    if assignment:
+        assignment.helper_value = helper_value
+    else:
+        assignment = ServiceAssignment(service_id=service.id, employee_id=employee.id, helper_value=helper_value)
+        db.session.add(assignment)
+
+    try:
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.exception("Falha ao atribuir serviço ao ajudante: %s", exc)
+        flash("Não foi possível enviar o serviço ao ajudante. Tente novamente.", "error")
+        return redirect(url_for("service_detail", service_id=service.id) + "#enviar-ajudante")
+
+    time_txt = service.service_time.strftime("%H:%M") if (not service.all_day and service.service_time) else "sem horário definido"
+    title = "⚡ Serviço enviado para você"
+    message = f"{service.title} · {service.client.name} · {service.service_date.strftime('%d/%m/%Y')} · {time_txt} · Seu valor: {money(helper_value)}"
+    try:
+        notice = EmployeeNotification(
+            employee_id=employee.id, service_id=service.id, kind="assignment", title=title,
+            message=message, notification_date=service.service_date,
+            dedupe_key=f"manual-send:service:{service.id}:employee:{employee.id}:{uuid.uuid4().hex[:10]}",
+        )
+        db.session.add(notice)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.warning("Serviço atribuído, mas não foi possível salvar o aviso: %s", exc)
+
+    try:
+        send_push_async(employee.id, title, message, url=f"/me/services/{service.id}")
+    except Exception as exc:
+        app.logger.warning("Serviço atribuído, mas o disparo do push falhou: %s", exc)
+
+    flash(f"Serviço enviado para {employee.name}. Já aparece no celular dele.", "success")
+    return redirect(url_for("service_detail", service_id=service.id) + "#enviar-ajudante")
+
+
+@app.route("/services/<int:service_id>/mark-paid", methods=["POST"])
+@login_required
+def service_mark_paid(service_id):
+    """Marca o valor total do serviço como recebido em um clique."""
+    service = Service.query.get_or_404(service_id)
+    total = Decimal(service.total_value or 0)
+    if total <= 0:
+        flash("Esse serviço está com valor R$ 0,00. Informe o valor antes de marcar como pago.", "error")
+        return redirect(request.referrer or url_for("service_detail", service_id=service.id))
+    service.amount_paid = total
+    service.payment_status = "paid"
+    method = request.form.get("payment_method", "").strip()
+    if method:
+        service.payment_method = method
+    sync_service_total(service)
+    ensure_income_entry(service)
+    db.session.commit()
+    flash("✓ Pagamento marcado como pago.", "success")
+    return redirect(request.referrer or url_for("service_detail", service_id=service.id))
 
 
 @app.route("/services/<int:service_id>/delete", methods=["POST"])
@@ -1760,7 +1879,8 @@ def quote_new():
 @login_required
 def quote_detail(quote_id):
     quote = Quote.query.get_or_404(quote_id)
-    return render_template("quote_detail.html", quote=quote)
+    employees = Employee.query.filter_by(active=True).order_by(Employee.name).all()
+    return render_template("quote_detail.html", quote=quote, employees=employees)
 
 
 @app.route("/quotes/<int:quote_id>/edit", methods=["GET", "POST"])
@@ -1858,8 +1978,42 @@ def quote_convert(quote_id):
     quote.status = "approved"
     quote.converted_service_id = service.id
     ensure_income_entry(service)
+
+    employee_id = request.form.get("employee_id", type=int)
+    employee = db.session.get(Employee, employee_id) if employee_id else None
+    assignment = None
+    if employee and employee.active:
+        assignment = ServiceAssignment(
+            service_id=service.id, employee_id=employee.id,
+            helper_value=decimal_or_zero(request.form.get("helper_value")),
+        )
+        db.session.add(assignment)
+
     db.session.commit()
-    flash("Orçamento aprovado e transformado em serviço. O cliente foi cadastrado automaticamente." if quote.is_guest else "Orçamento aprovado e transformado em serviço.", "success")
+
+    if assignment:
+        title = "⚡ Novo serviço aprovado"
+        message = f"{service.title} · {service.client.name} · {service.service_date.strftime('%d/%m/%Y')} · Seu valor: {money(assignment.helper_value)}"
+        try:
+            notice = EmployeeNotification(
+                employee_id=employee.id, service_id=service.id, kind="assignment", title=title,
+                message=message, notification_date=service.service_date,
+                dedupe_key=f"quote:{quote.id}:service:{service.id}:employee:{employee.id}",
+            )
+            db.session.add(notice)
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            app.logger.warning("Serviço criado, mas aviso ao ajudante falhou: %s", exc)
+        try:
+            send_push_async(employee.id, title, message, url=f"/me/services/{service.id}")
+        except Exception as exc:
+            app.logger.warning("Serviço criado, mas disparo do push ao ajudante falhou: %s", exc)
+
+    base_msg = "Orçamento aprovado e transformado em serviço. O cliente foi cadastrado automaticamente." if quote.is_guest else "Orçamento aprovado e transformado em serviço."
+    if assignment:
+        base_msg += f" Serviço enviado para {employee.name}."
+    flash(base_msg, "success")
     return redirect(url_for("service_detail", service_id=service.id))
 
 
@@ -1878,6 +2032,155 @@ def quote_delete(quote_id):
 def quote_print(quote_id):
     quote = Quote.query.get_or_404(quote_id)
     return render_template("quote_print.html", quote=quote)
+
+
+def build_quote_pdf(quote):
+    """Gera o PDF do orçamento em memória, pronto para download/compartilhamento."""
+    settings = get_settings()
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=15 * mm,
+        leftMargin=15 * mm,
+        topMargin=15 * mm,
+        bottomMargin=15 * mm,
+        title=f"Orçamento #{quote.id} - {quote.customer_name}",
+        author=settings.business_name or "Guilherme Elétrica",
+    )
+
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
+        name="QuoteTitle", parent=styles["Title"], fontName="Helvetica-Bold",
+        fontSize=19, leading=23, spaceAfter=5, textColor=colors.HexColor("#111827")
+    ))
+    styles.add(ParagraphStyle(
+        name="QuoteSmall", parent=styles["BodyText"], fontSize=9.5, leading=13,
+        textColor=colors.HexColor("#4B5563")
+    ))
+    styles.add(ParagraphStyle(
+        name="QuoteRight", parent=styles["BodyText"], fontSize=9.5, leading=13,
+        alignment=TA_RIGHT, textColor=colors.HexColor("#4B5563")
+    ))
+    styles.add(ParagraphStyle(
+        name="QuoteSection", parent=styles["Heading2"], fontName="Helvetica-Bold",
+        fontSize=11, leading=14, spaceBefore=4, spaceAfter=5, textColor=colors.HexColor("#111827")
+    ))
+    styles.add(ParagraphStyle(
+        name="QuoteBody", parent=styles["BodyText"], fontSize=10, leading=14,
+        textColor=colors.HexColor("#111827")
+    ))
+
+    story = []
+    business_meta = []
+    if settings.phone:
+        business_meta.append(str(settings.phone))
+    if settings.city:
+        business_meta.append(str(settings.city))
+    left = [
+        Paragraph(xml_escape(str(settings.business_name or "Guilherme Elétrica")), styles["QuoteTitle"]),
+        Paragraph(xml_escape(" · ".join(business_meta)), styles["QuoteSmall"]) if business_meta else Paragraph("", styles["QuoteSmall"]),
+    ]
+    validity = f"<br/>Válido até {quote.valid_until.strftime('%d/%m/%Y')}" if quote.valid_until else ""
+    right = Paragraph(
+        f"<b>ORÇAMENTO #{quote.id}</b><br/>{quote.quote_date.strftime('%d/%m/%Y') if quote.quote_date else ''}{validity}",
+        styles["QuoteRight"],
+    )
+    header = Table([[left, right]], colWidths=[115 * mm, 65 * mm])
+    header.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LINEBELOW", (0, 0), (-1, -1), 1.6, colors.HexColor("#111827")),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.extend([header, Spacer(1, 7 * mm)])
+
+    client_lines = [f"<b>{xml_escape(str(quote.customer_name or 'Cliente'))}</b>"]
+    if quote.customer_phone:
+        client_lines.append(xml_escape(str(quote.customer_phone)))
+    if quote.customer_address:
+        client_lines.append(xml_escape(str(quote.customer_address)))
+    if quote.customer_city:
+        client_lines.append(xml_escape(str(quote.customer_city)))
+    client_box = Table([[Paragraph("<b>Cliente</b><br/>" + "<br/>".join(client_lines), styles["QuoteBody"])]], colWidths=[180 * mm])
+    client_box.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor("#D1D5DB")),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F9FAFB")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 9),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+    ]))
+    story.extend([client_box, Spacer(1, 5 * mm)])
+
+    story.append(Paragraph(xml_escape(str(quote.title or "Orçamento")), styles["QuoteSection"]))
+    if quote.description:
+        story.extend([Paragraph(xml_escape(str(quote.description)).replace('\n', '<br/>'), styles["QuoteBody"]), Spacer(1, 4 * mm)])
+
+    data = [["Descrição", "Qtd.", "Unitário", "Subtotal"]]
+    for item in quote.items:
+        data.append([
+            Paragraph(xml_escape(str(item.description or "Item")), styles["QuoteBody"]),
+            f"{item.qty} {item.unit}",
+            money(item.unit_price),
+            money(item.subtotal),
+        ])
+    if len(data) == 1:
+        data.append(["Serviço", "1 un", money(quote.total_value), money(quote.total_value)])
+
+    items_table = Table(data, colWidths=[91 * mm, 24 * mm, 31 * mm, 34 * mm], repeatRows=1)
+    items_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+        ("ALIGN", (1, 0), (-1, 0), "RIGHT"),
+        ("GRID", (0, 0), (-1, -1), 0.45, colors.HexColor("#D1D5DB")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F9FAFB")]),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    story.extend([items_table, Spacer(1, 5 * mm)])
+
+    totals = [
+        ["Serviços", money(quote.labor_value)],
+        ["Materiais", money(quote.material_value)],
+        ["Desconto", f"- {money(quote.discount)}"],
+        [Paragraph("<b>TOTAL</b>", styles["QuoteBody"]), Paragraph(f"<b>{money(quote.total_value)}</b>", styles["QuoteRight"])],
+    ]
+    total_table = Table(totals, colWidths=[55 * mm, 40 * mm], hAlign="RIGHT")
+    total_table.setStyle(TableStyle([
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("LINEABOVE", (0, -1), (-1, -1), 1, colors.HexColor("#111827")),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(total_table)
+
+    extras = []
+    if quote.notes:
+        extras.append(KeepTogether([Spacer(1, 6 * mm), Paragraph("Condições / observações", styles["QuoteSection"]), Paragraph(xml_escape(str(quote.notes)).replace('\n', '<br/>'), styles["QuoteBody"])]))
+    if settings.pix_key:
+        extras.append(KeepTogether([Spacer(1, 5 * mm), Paragraph("Pagamento", styles["QuoteSection"]), Paragraph(f"<b>Pix:</b> {xml_escape(str(settings.pix_key))}", styles["QuoteBody"])]))
+    story.extend(extras)
+    if settings.footer_text:
+        story.extend([Spacer(1, 10 * mm), Paragraph(xml_escape(str(settings.footer_text)), styles["QuoteSmall"])])
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+
+@app.route("/quotes/<int:quote_id>/pdf")
+@login_required
+def quote_pdf(quote_id):
+    quote = Quote.query.get_or_404(quote_id)
+    pdf = build_quote_pdf(quote)
+    customer = secure_filename(quote.customer_name or "cliente") or "cliente"
+    filename = f"orcamento-{quote.id}-{customer}.pdf"
+    return send_file(pdf, mimetype="application/pdf", as_attachment=True, download_name=filename, max_age=0)
 
 
 # -------------------- Finance --------------------
@@ -2249,36 +2552,68 @@ def team_task_new():
     employee_id = request.args.get("employee_id", type=int) or request.form.get("employee_id", type=int)
     service_id = request.args.get("service_id", type=int) or request.form.get("service_id", type=int)
     selected_service = db.session.get(Service, service_id) if service_id else None
+
     if request.method == "POST":
         employee = db.session.get(Employee, employee_id) if employee_id else None
-        if not employee:
-            flash("Selecione o ajudante.", "error")
+        if not employee or not employee.active:
+            flash("Selecione um ajudante ativo.", "error")
         else:
             client_id = request.form.get("client_id", type=int) or (selected_service.client_id if selected_service else None)
             client = db.session.get(Client, client_id) if client_id else None
-            task = EmployeeTask(employee_id=employee.id, client_id=client_id, service_id=service_id, title=request.form.get("title", "").strip(), task_date=parse_date(request.form.get("task_date"), date.today()), task_time=parse_time(request.form.get("task_time")), description=request.form.get("description", "").strip(), address=request.form.get("address", "").strip() or (selected_service.address if selected_service else (client.address if client else "")), priority=request.form.get("priority", "normal"), status="pending")
-            if task.title:
-                db.session.add(task)
-                db.session.commit()
+            task = EmployeeTask(
+                employee_id=employee.id, client_id=client_id,
+                service_id=selected_service.id if selected_service else None,
+                title=request.form.get("title", "").strip(),
+                task_date=parse_date(request.form.get("task_date"), date.today()),
+                task_time=parse_time(request.form.get("task_time")),
+                description=request.form.get("description", "").strip(),
+                address=request.form.get("address", "").strip() or (selected_service.address if selected_service else (client.address if client else "")),
+                priority=request.form.get("priority", "normal"), status="pending",
+            )
+            if not task.title:
+                flash("Informe a tarefa.", "error")
+            else:
+                # Primeiro salva a tarefa. Falha de push/notificação nunca deve derrubar a página.
+                try:
+                    db.session.add(task)
+                    db.session.commit()
+                except Exception as exc:
+                    db.session.rollback()
+                    app.logger.exception("Falha ao salvar tarefa da equipe: %s", exc)
+                    flash("Não foi possível salvar a tarefa. Tente novamente.", "error")
+                    return redirect(url_for("team_task_new", employee_id=employee.id, service_id=(selected_service.id if selected_service else None)))
+
                 title = "🧰 Nova tarefa"
                 time_txt = task.task_time.strftime("%H:%M") if task.task_time else "sem horário definido"
                 message = f"{task.title} · {task.task_date.strftime('%d/%m/%Y')} · {time_txt}"
-                notice = EmployeeNotification(
-                    employee_id=employee.id,
-                    service_id=task.service_id,
-                    kind="task",
-                    title=title,
-                    message=message,
-                    notification_date=task.task_date,
-                    dedupe_key=f"assigned:task:{task.id}:employee:{employee.id}",
-                )
-                db.session.add(notice)
-                db.session.commit()
-                send_push_to_employee(employee.id, title, message, url="/me")
+
+                try:
+                    notice = EmployeeNotification(
+                        employee_id=employee.id, service_id=task.service_id, kind="task",
+                        title=title, message=message, notification_date=task.task_date,
+                        dedupe_key=f"assigned:task:{task.id}:employee:{employee.id}",
+                    )
+                    db.session.add(notice)
+                    db.session.commit()
+                except Exception as exc:
+                    db.session.rollback()
+                    app.logger.warning("Tarefa salva, mas aviso interno falhou: %s", exc)
+
+                try:
+                    send_push_async(employee.id, title, message, url="/me")
+                except Exception as exc:
+                    app.logger.warning("Tarefa salva, mas disparo do push falhou: %s", exc)
+
                 flash("Tarefa enviada para o ajudante.", "success")
                 return redirect(url_for("employee_detail", employee_id=employee.id))
-            flash("Informe a tarefa.", "error")
-    return render_template("task_form.html", employees=Employee.query.filter_by(active=True).order_by(Employee.name).all(), clients=Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all(), services=Service.query.order_by(Service.service_date.desc()).limit(100).all(), employee_id=employee_id, service_id=service_id, selected_service=selected_service)
+
+    return render_template(
+        "task_form.html",
+        employees=Employee.query.filter_by(active=True).order_by(Employee.name).all(),
+        clients=Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all(),
+        services=Service.query.order_by(Service.service_date.desc()).limit(100).all(),
+        employee_id=employee_id, service_id=service_id, selected_service=selected_service,
+    )
 
 
 @app.route("/team/tasks/<int:task_id>/status", methods=["POST"])

@@ -39,6 +39,7 @@
   {% if map_address %}<a class="btn maps-btn" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query={{ map_address|urlencode }}">📍 Abrir no Maps</a>{% endif %}
   <a class="btn" target="_blank" href="{{ url_for('service_print', service_id=service.id) }}">🖨 OS / imprimir</a>
   {% if service.client.phone %}<a class="btn success" target="_blank" href="https://wa.me/{{ service.client.phone|wa }}?text={{ ('Olá, '+service.client.name+'! Sobre o serviço '+service.title+' do dia '+(service.service_date|datebr)+'.')|urlencode }}">WhatsApp</a>{% endif %}
+  {% if service.payment_status != 'paid' and service.total_value > 0 %}<form method="post" action="{{ url_for('service_mark_paid', service_id=service.id) }}" onsubmit="return confirm('Marcar este serviço inteiro como pago?')"><button class="btn success" type="submit">✓ Dar como pago</button></form>{% endif %}
   <form method="post" action="{{ url_for('service_delete', service_id=service.id) }}" onsubmit="return confirmDelete('Excluir definitivamente este serviço?')"><button class="btn danger" type="submit">🗑 Excluir</button></form>
 </div>
 
@@ -161,9 +162,18 @@
   </div>
 
   <div class="grid">
-    <div class="card">
-      <div class="card-head"><h2>Equipe no serviço</h2><a class="btn sm" href="{{ url_for('team_task_new', service_id=service.id, employee_id=(assignments[0].employee_id if assignments else None)) }}">+ Tarefa</a></div>
+    <div class="card" id="enviar-ajudante">
+      <div class="card-head"><h2>📲 Enviar serviço para o ajudante</h2><a class="btn sm" href="{{ url_for('team_task_new', service_id=service.id, employee_id=(assignments[0].employee_id if assignments else None)) }}">+ Tarefa</a></div>
       <div class="card-body">
+        {% if employees %}
+        <form method="post" action="{{ url_for('service_assign_helper', service_id=service.id) }}" class="form-grid" style="margin-bottom:16px">
+          <div class="field"><label>Ajudante</label><select class="select" name="employee_id" required><option value="">Selecione...</option>{% for e in employees %}<option value="{{ e.id }}" {% if assignments and assignments[0].employee_id==e.id %}selected{% endif %}>{{ e.name }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Valor dele neste serviço</label><input class="input" name="helper_value" inputmode="decimal" value="{{ assignments[0].helper_value if assignments else '' }}" placeholder="Ex.: 150,00"></div>
+          <div class="field full"><button class="btn primary" type="submit">📲 Enviar serviço para o ajudante</button><div class="help">Ao clicar, o serviço aparece no celular dele e o sistema tenta enviar a notificação push.</div></div>
+        </form>
+        {% else %}
+        <div class="empty" style="margin-bottom:14px">Cadastre um ajudante em <a href="{{ url_for('employee_new') }}">Equipe / Ajudante</a> para poder enviar serviços.</div>
+        {% endif %}
         <div class="list">
           {% for a in assignments %}
           <div class="service-row">
@@ -230,11 +240,13 @@
       <div class="card-body">
         <p class="muted">Falta receber <strong style="color:var(--text)">{{ (service.total_value-service.amount_paid)|money }}</strong></p>
         {% if service.payment_status!='paid' %}
+        {% if service.total_value > 0 %}<form method="post" action="{{ url_for('service_mark_paid', service_id=service.id) }}" style="margin-bottom:12px" onsubmit="return confirm('Confirmar o pagamento total de {{ service.total_value|money }}?')"><button class="btn success" style="width:100%" type="submit">✓ Dar como pago agora</button></form>{% endif %}
+        <details class="more-options"><summary>Registrar pagamento parcial <span>se recebeu só uma parte</span></summary><div class="more-options-body">
         <form method="post" action="{{ url_for('service_payment', service_id=service.id) }}" class="form-grid">
           <div class="field"><label>Valor recebido agora</label><input class="input" name="amount" inputmode="decimal" required></div>
           <div class="field"><label>Forma</label><select class="select" name="payment_method"><option>Pix</option><option>Dinheiro</option><option>Cartão</option><option>Transferência</option><option>Boleto</option></select></div>
           <div class="field full"><button class="btn success" type="submit">Registrar recebimento</button></div>
-        </form>
+        </form></div></details>
         {% else %}<div class="empty" style="color:#8ef0c1">✓ Serviço totalmente recebido</div>{% endif %}
       </div>
     </div>

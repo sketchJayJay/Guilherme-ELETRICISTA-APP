@@ -16,3 +16,9 @@
 - A linha agora é salva normalmente e recebe automaticamente a descrição "Serviço" ou "Material".
 - Adicionado total do orçamento em tempo real no formulário para conferir antes de salvar.
 - Campos de quantidade/valor atualizam o total imediatamente no celular.
+
+## PDF direto no WhatsApp
+- Novo botão **PDF no WhatsApp** na tela do orçamento.
+- O sistema gera o PDF real no servidor e, no smartphone/PWA, abre o compartilhamento nativo do iOS/Android com o arquivo anexado.
+- Basta escolher **WhatsApp** e o contato do cliente.
+- Em navegador sem suporte a compartilhamento de arquivos, o PDF é baixado como alternativa.
