@@ -1595,18 +1595,37 @@ def parse_quote_items():
     qtys = request.form.getlist("item_qty[]")
     units = request.form.getlist("item_unit[]")
     prices = request.form.getlist("item_price[]")
+
+    # Não dependa apenas do campo descrição para detectar uma linha preenchida.
+    # No celular é comum o usuário informar só o valor, usando o título do
+    # orçamento como descrição geral. Antes, uma linha assim era descartada e
+    # o orçamento acabava salvo como R$ 0,00.
+    row_count = max(len(descriptions), len(categories), len(qtys), len(units), len(prices))
     items = []
-    for i, desc in enumerate(descriptions):
-        desc = desc.strip()
-        if not desc:
+    for i in range(row_count):
+        raw_desc = descriptions[i] if i < len(descriptions) else ""
+        category = categories[i] if i < len(categories) else "service"
+        raw_qty = qtys[i] if i < len(qtys) else "1"
+        raw_unit = units[i] if i < len(units) else "un"
+        raw_price = prices[i] if i < len(prices) else ""
+
+        desc = (raw_desc or "").strip()
+        qty = decimal_or_zero(raw_qty)
+        price = decimal_or_zero(raw_price)
+
+        # Linha completamente vazia: ignora. Se houver preço/quantidade, mantém.
+        has_meaningful_value = bool(desc or (str(raw_price or "").strip()) or (str(raw_qty or "").strip() not in {"", "1", "1.0", "1,0"}))
+        if not has_meaningful_value:
             continue
-        qty = decimal_or_zero(qtys[i] if i < len(qtys) else 1)
-        price = decimal_or_zero(prices[i] if i < len(prices) else 0)
+
+        if not desc:
+            desc = "Material" if category == "material" else "Serviço"
+
         items.append({
             "description": desc,
-            "category": categories[i] if i < len(categories) else "service",
+            "category": category,
             "qty": qty if qty > 0 else Decimal("1"),
-            "unit": (units[i] if i < len(units) else "un") or "un",
+            "unit": (raw_unit or "un").strip() or "un",
             "unit_price": price,
         })
     return items

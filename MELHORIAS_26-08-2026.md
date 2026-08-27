@@ -10,3 +10,9 @@
 - Orçamento para cliente ainda não cadastrado.
 - Ao aprovar orçamento avulso, o cliente é cadastrado automaticamente.
 - Migração automática de banco para as novas colunas, sem apagar dados existentes.
+
+## Correção orçamento zerando ao salvar
+- Corrigido caso em que o usuário preenchia apenas quantidade/unidade/valor e deixava a descrição do item vazia.
+- A linha agora é salva normalmente e recebe automaticamente a descrição "Serviço" ou "Material".
+- Adicionado total do orçamento em tempo real no formulário para conferir antes de salvar.
+- Campos de quantidade/valor atualizam o total imediatamente no celular.

@@ -39,13 +39,45 @@
 <div class="field"><label>Desconto</label><input class="input" name="discount" value="{{ quote.discount if quote else '0' }}" inputmode="decimal"></div>
 <div class="field full"><label>Descrição geral</label><textarea class="textarea" name="description">{{ quote.description if quote else '' }}</textarea></div>
 
-<div class="field full"><label>Itens do orçamento</label><div id="items">{% if quote and quote.items %}{% for i in quote.items %}<div class="quote-item-row"><div class="field desc"><input class="input" name="item_description[]" value="{{ i.description }}" placeholder="Descrição"></div><div class="field"><select class="select" name="item_category[]"><option value="service" {% if i.category=='service' %}selected{% endif %}>Serviço</option><option value="material" {% if i.category=='material' %}selected{% endif %}>Material</option></select></div><div class="field"><input class="input" name="item_qty[]" value="{{ i.qty }}" placeholder="Qtd"></div><div class="field"><input class="input" name="item_unit[]" value="{{ i.unit }}" placeholder="un"></div><div class="field"><input class="input" name="item_price[]" value="{{ i.unit_price }}" placeholder="Valor"></div><button class="btn danger sm" type="button" onclick="this.parentElement.remove()">×</button></div>{% endfor %}{% else %}<div class="quote-item-row"><div class="field desc"><input class="input" name="item_description[]" placeholder="Descrição"></div><div class="field"><select class="select" name="item_category[]"><option value="service">Serviço</option><option value="material">Material</option></select></div><div class="field"><input class="input" name="item_qty[]" value="1" placeholder="Qtd"></div><div class="field"><input class="input" name="item_unit[]" value="un" placeholder="un"></div><div class="field"><input class="input" name="item_price[]" placeholder="Valor"></div><button class="btn danger sm" type="button" onclick="this.parentElement.remove()">×</button></div>{% endif %}</div><button class="btn sm" type="button" onclick="addItem()">+ Adicionar item</button></div>
+<div class="field full"><label>Itens do orçamento</label><div class="help" style="margin-bottom:10px">Você pode preencher só o valor. Se a descrição do item ficar vazia, o sistema usa “Serviço” ou “Material” automaticamente.</div><div id="items">{% if quote and quote.items %}{% for i in quote.items %}<div class="quote-item-row"><div class="field desc"><input class="input" name="item_description[]" value="{{ i.description }}" placeholder="Descrição"></div><div class="field"><select class="select" name="item_category[]"><option value="service" {% if i.category=='service' %}selected{% endif %}>Serviço</option><option value="material" {% if i.category=='material' %}selected{% endif %}>Material</option></select></div><div class="field"><input class="input" name="item_qty[]" value="{{ i.qty }}" placeholder="Qtd"></div><div class="field"><input class="input" name="item_unit[]" value="{{ i.unit }}" placeholder="un"></div><div class="field"><input class="input" name="item_price[]" value="{{ i.unit_price }}" placeholder="Valor"></div><button class="btn danger sm" type="button" onclick="this.parentElement.remove()">×</button></div>{% endfor %}{% else %}<div class="quote-item-row"><div class="field desc"><input class="input" name="item_description[]" placeholder="Descrição"></div><div class="field"><select class="select" name="item_category[]"><option value="service">Serviço</option><option value="material">Material</option></select></div><div class="field"><input class="input" name="item_qty[]" value="1" placeholder="Qtd"></div><div class="field"><input class="input" name="item_unit[]" value="un" placeholder="un"></div><div class="field"><input class="input" name="item_price[]" placeholder="Valor"></div><button class="btn danger sm" type="button" onclick="this.parentElement.remove()">×</button></div>{% endif %}</div><button class="btn sm" type="button" onclick="addItem()">+ Adicionar item</button></div>
+<div class="field full"><div class="quote-live-total" style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border:1px solid var(--border);border-radius:16px;background:rgba(255,193,7,.06);margin-top:4px"><span style="font-weight:800">Total do orçamento</span><strong id="quoteLiveTotal" style="font-size:24px">R$ 0,00</strong></div></div>
 <div class="field full"><label>Observações / condições</label><textarea class="textarea" name="notes">{{ quote.notes if quote else '' }}</textarea></div>
 <div class="field full"><div class="actions"><button class="btn primary" type="submit">Salvar orçamento</button><a class="btn" href="{{ url_for('quotes') }}">Cancelar</a>{% if quote and quote.id %}<button class="btn danger" type="submit" formnovalidate formaction="{{ url_for('quote_delete', quote_id=quote.id) }}" formmethod="post" onclick="return confirmDelete('Excluir definitivamente este orçamento?')">Excluir orçamento</button>{% endif %}</div></div>
 </div></form>
 {% endblock %}
 {% block scripts %}<script>
-function addItem(){const d=document.createElement('div');d.className='quote-item-row';d.innerHTML=`<div class="field desc"><input class="input" name="item_description[]" placeholder="Descrição"></div><div class="field"><select class="select" name="item_category[]"><option value="service">Serviço</option><option value="material">Material</option></select></div><div class="field"><input class="input" name="item_qty[]" value="1" placeholder="Qtd"></div><div class="field"><input class="input" name="item_unit[]" value="un" placeholder="un"></div><div class="field"><input class="input" name="item_price[]" placeholder="Valor"></div><button class="btn danger sm" type="button" onclick="this.parentElement.remove()">×</button>`;document.getElementById('items').appendChild(d)}
+function addItem(){const d=document.createElement('div');d.className='quote-item-row';d.innerHTML=`<div class="field desc"><input class="input" name="item_description[]" placeholder="Descrição (opcional)"></div><div class="field"><select class="select" name="item_category[]"><option value="service">Serviço</option><option value="material">Material</option></select></div><div class="field"><input class="input" name="item_qty[]" value="1" placeholder="Qtd" inputmode="decimal"></div><div class="field"><input class="input" name="item_unit[]" value="un" placeholder="un"></div><div class="field"><input class="input" name="item_price[]" placeholder="Valor" inputmode="decimal"></div><button class="btn danger sm" type="button" onclick="this.parentElement.remove();updateQuoteTotal()">×</button>`;document.getElementById('items').appendChild(d);bindQuoteTotalInputs();updateQuoteTotal()}
+
+function parseMoneyInput(value){
+  let v=(value||'').toString().trim().replace(/R\$/gi,'').replace(/\s/g,'');
+  if(!v) return 0;
+  if(v.includes(',')) v=v.replace(/\./g,'').replace(',','.');
+  const n=Number(v);
+  return Number.isFinite(n)?n:0;
+}
+function updateQuoteTotal(){
+  const rows=[...document.querySelectorAll('.quote-item-row')];
+  let subtotal=0;
+  rows.forEach(row=>{
+    const qty=parseMoneyInput(row.querySelector('[name="item_qty[]"]')?.value||'1')||1;
+    const price=parseMoneyInput(row.querySelector('[name="item_price[]"]')?.value||'0');
+    subtotal += qty*price;
+  });
+  const discount=parseMoneyInput(document.querySelector('[name="discount"]')?.value||'0');
+  const total=Math.max(0, subtotal-discount);
+  const el=document.getElementById('quoteLiveTotal');
+  if(el) el.textContent=total.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+}
+function bindQuoteTotalInputs(){
+  document.querySelectorAll('[name="item_qty[]"],[name="item_price[]"],[name="discount"]').forEach(el=>{
+    if(el.dataset.totalBound) return;
+    el.dataset.totalBound='1';
+    el.addEventListener('input',updateQuoteTotal);
+    el.addEventListener('change',updateQuoteTotal);
+  });
+}
 function toggleQuoteCustomer(){const mode=document.querySelector('input[name="customer_mode"]:checked')?.value||'guest';document.getElementById('registeredCustomerBox').style.display=mode==='registered'?'grid':'none';document.getElementById('guestCustomerBox').style.display=mode==='guest'?'grid':'none'}
 toggleQuoteCustomer();
+bindQuoteTotalInputs();
+updateQuoteTotal();
 </script>{% endblock %}
