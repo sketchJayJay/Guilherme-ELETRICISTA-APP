@@ -1092,7 +1092,7 @@ def client_delete(client_id):
 @login_required
 def agenda():
     view = request.args.get("view", "week")
-    base = parse_date(request.args.get("date"), date.today())
+    base = parse_date(request.args.get("date"), local_today())
     if view == "month":
         start = base.replace(day=1)
         end = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
@@ -1100,7 +1100,10 @@ def agenda():
         start = base
         end = base + timedelta(days=1)
     else:
-        start = base - timedelta(days=base.weekday())
+        # A agenda principal funciona como uma janela móvel de 7 dias.
+        # Assim, ao abrir a Agenda hoje, o Guilherme já enxerga os próximos
+        # serviços, inclusive os que caem no início da próxima semana.
+        start = base
         end = start + timedelta(days=7)
         view = "week"
     services = Service.query.filter(Service.service_date >= start, Service.service_date < end).order_by(Service.service_date, Service.service_time.asc().nullslast(), Service.id).all()
