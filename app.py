@@ -988,6 +988,9 @@ def dashboard():
     low_stock = Material.query.filter(Material.stock_qty <= Material.min_stock).order_by(Material.name).limit(8).all()
     team_pending_tasks = EmployeeTask.query.join(Employee).filter(Employee.active.is_(True), EmployeeTask.status.in_(["pending", "in_progress"]), EmployeeTask.task_date <= today).count()
     helper_pending_amount = db.session.query(func.coalesce(func.sum(EmployeeExpense.amount), 0)).join(Employee).filter(Employee.active.is_(True), EmployeeExpense.status == "pending").scalar() or 0
+    client_count = Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).count()
+    open_quote_count = Quote.query.filter(Quote.status.in_(["draft", "sent"])).count()
+    recent_services = Service.query.filter(Service.status != "cancelled").order_by(Service.id.desc()).limit(5).all()
 
     return render_template(
         "dashboard.html",
@@ -1001,6 +1004,9 @@ def dashboard():
         low_stock=low_stock,
         team_pending_tasks=team_pending_tasks,
         helper_pending_amount=helper_pending_amount,
+        client_count=client_count,
+        open_quote_count=open_quote_count,
+        recent_services=recent_services,
     )
 
 

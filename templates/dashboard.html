@@ -1,18 +1,73 @@
-{% extends 'base.html' %}{% block title %}Início · {{ app_settings.business_name }}{% endblock %}{% block content %}
-<div class="page-head"><div><h1>Painel do dia</h1><p>Serviços, recebimentos e pendências num só lugar.</p></div><div class="actions"><a class="btn primary" href="{{ url_for('service_new', date=today.isoformat()) }}">⚡ Novo serviço</a></div></div>
-<div class="grid stats">
-<div class="stat"><div class="label">Recebido no mês</div><div class="value">{{ month_income|money }}</div><div class="foot">Entradas confirmadas</div></div>
-<div class="stat"><div class="label">A receber</div><div class="value">{{ receivable|money }}</div><div class="foot">{{ pending_count }} lançamento(s) pendente(s)</div></div>
-<div class="stat"><div class="label">Despesas no mês</div><div class="value">{{ month_expense|money }}</div><div class="foot">Pagamentos confirmados</div></div>
-<div class="stat"><div class="label">Saldo do mês</div><div class="value">{{ (month_income-month_expense)|money }}</div><div class="foot">Receitas menos despesas</div></div>
-</div>
-<a class="card team-dashboard-strip" href="{{ url_for('team') }}"><div class="card-body"><div><div class="eyebrow">EQUIPE</div><strong>🧰 Ajudante e tarefas</strong><div class="muted">{{ team_pending_tasks }} tarefa(s) pendente(s) · {{ helper_pending_amount|money }} a pagar</div></div><span class="btn sm">Abrir equipe</span></div></a>
-<div class="two-col">
-<div class="card"><div class="card-head"><h2>Hoje · {{ today|datebr }}</h2><a class="btn sm" href="{{ url_for('agenda', view='day', date=today.isoformat()) }}">Ver agenda</a></div><div class="card-body"><div class="list">{% for s in today_services %}<div class="service-row"><div class="row-main"><div class="row-title">{{ s.title }}</div><div class="row-sub">{{ s.client.name }} · {% if s.all_day %}Sem horário definido{% else %}{{ s.service_time|timebr }}{% endif %}</div></div><div class="row-side"><span class="badge {{ s.status }}">{{ status_labels[s.status] }}</span><div style="margin-top:7px"><a class="btn sm" href="{{ url_for('service_detail', service_id=s.id) }}">Abrir</a></div></div></div>{% else %}<div class="empty">Nenhum serviço para hoje. Agenda respirando 😌</div>{% endfor %}</div></div></div>
-<div class="card"><div class="card-head"><h2>Próximos serviços</h2><a class="btn sm" href="{{ url_for('agenda') }}">Agenda</a></div><div class="card-body"><div class="list">{% for s in upcoming %}<div class="service-row"><div class="row-main"><div class="row-title">{{ s.title }}</div><div class="row-sub">{{ s.service_date|datebr }} · {{ s.client.name }}</div></div><a class="btn sm" href="{{ url_for('service_detail', service_id=s.id) }}">Abrir</a></div>{% else %}<div class="empty">Sem serviços futuros cadastrados.</div>{% endfor %}</div></div></div>
-</div>
-{% if overdue_services or low_stock %}<div class="two-col" style="margin-top:18px">
-<div class="card"><div class="card-head"><h2>⚠ Serviços atrasados</h2></div><div class="card-body"><div class="list">{% for s in overdue_services %}<div class="service-row"><div><div class="row-title">{{ s.title }}</div><div class="row-sub">{{ s.service_date|datebr }} · {{ s.client.name }}</div></div><a class="btn sm" href="{{ url_for('service_detail', service_id=s.id) }}">Resolver</a></div>{% else %}<div class="empty">Nenhum atraso.</div>{% endfor %}</div></div></div>
-<div class="card"><div class="card-head"><h2>Estoque baixo</h2></div><div class="card-body"><div class="list">{% for m in low_stock %}<div class="service-row"><div><div class="row-title">{{ m.name }}</div><div class="row-sub">Estoque: {{ m.stock_qty }} {{ m.unit }} · mínimo {{ m.min_stock }}</div></div><a class="btn sm" href="{{ url_for('materials') }}">Estoque</a></div>{% else %}<div class="empty">Estoque sem alertas.</div>{% endfor %}</div></div></div>
-</div>{% endif %}
+{% extends 'base.html' %}
+{% block title %}Início · {{ app_settings.business_name }}{% endblock %}
+{% block content %}
+<section class="dashboard-hero">
+  <div class="hero-copy">
+    <img src="{{ url_for('static', filename='brand-logo.png') }}" class="hero-logo" alt="{{ app_settings.business_name }}">
+    <div class="hero-tagline">Qualidade e confiança em cada serviço!</div>
+  </div>
+  <div class="hero-energy" aria-hidden="true">
+    <div class="hero-electric">⚡</div>
+    <div class="hero-divider"></div>
+    <div class="hero-cold">❄</div>
+  </div>
+</section>
+
+<section class="dashboard-kpis">
+  <a class="dash-kpi kpi-yellow" href="{{ url_for('agenda', view='day', date=today.isoformat()) }}">
+    <div class="dash-kpi-icon">▣</div><div><small>Serviços Hoje</small><strong>{{ today_services|length }}</strong><span>Ver agenda →</span></div>
+  </a>
+  <a class="dash-kpi kpi-blue" href="{{ url_for('clients') }}">
+    <div class="dash-kpi-icon">♙</div><div><small>Clientes</small><strong>{{ client_count }}</strong><span>Ver clientes →</span></div>
+  </a>
+  <a class="dash-kpi kpi-green" href="{{ url_for('finance') }}">
+    <div class="dash-kpi-icon">$</div><div><small>Recebimentos</small><strong>{{ month_income|money }}</strong><span>Este mês →</span></div>
+  </a>
+  <a class="dash-kpi kpi-purple" href="{{ url_for('quotes') }}">
+    <div class="dash-kpi-icon">▤</div><div><small>Orçamentos</small><strong>{{ open_quote_count }}</strong><span>Em aberto →</span></div>
+  </a>
+</section>
+
+<section class="dashboard-columns">
+  <div class="dash-panel">
+    <div class="dash-panel-head"><h2>◷ Serviços recentes</h2><a href="{{ url_for('services') }}">Ver todos →</a></div>
+    <div class="dash-panel-body compact-list">
+      {% for s in recent_services %}
+      <a class="recent-row" href="{{ url_for('service_detail', service_id=s.id) }}">
+        <div class="recent-avatar">{{ s.client.name[:1]|upper if s.client else 'S' }}</div>
+        <div class="recent-main"><strong>{{ s.client.name if s.client else 'Cliente' }}</strong><span>{{ s.title }}</span></div>
+        <div class="recent-date">{{ s.service_date|datebr }}</div>
+        <span class="badge {{ s.status }}">{{ status_labels[s.status] }}</span>
+      </a>
+      {% else %}<div class="empty">Nenhum serviço cadastrado ainda.</div>{% endfor %}
+    </div>
+  </div>
+
+  <div class="dash-panel">
+    <div class="dash-panel-head"><h2>▣ Próximos agendamentos</h2><a href="{{ url_for('agenda') }}">Ver agenda →</a></div>
+    <div class="dash-panel-body compact-list">
+      {% for s in upcoming[:5] %}
+      <a class="schedule-row" href="{{ url_for('service_detail', service_id=s.id) }}">
+        <div class="schedule-time">{% if s.all_day %}Dia{% else %}{{ s.service_time|timebr }}{% endif %}</div>
+        <div class="schedule-dot {% if loop.index is even %}blue{% else %}yellow{% endif %}"></div>
+        <div class="schedule-main"><strong>{{ s.client.name }}</strong><span>{{ s.title }}</span></div>
+        <div class="schedule-date">{{ s.service_date|datebr }}</div>
+      </a>
+      {% else %}<div class="empty">Sem próximos agendamentos.</div>{% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="dashboard-actions">
+  <a class="quick-action quick-yellow" href="{{ url_for('quote_new') }}"><span>＋</span>Novo Orçamento</a>
+  <a class="quick-action quick-blue" href="{{ url_for('service_new', date=today.isoformat()) }}"><span>⌁</span>Novo Serviço</a>
+  <a class="quick-action quick-green" href="{{ url_for('client_new') }}"><span>♙</span>Novo Cliente</a>
+</section>
+
+{% if overdue_services or low_stock %}
+<section class="dashboard-columns alerts-row">
+<div class="dash-panel"><div class="dash-panel-head"><h2>⚠ Serviços atrasados</h2></div><div class="dash-panel-body compact-list">{% for s in overdue_services %}<a class="recent-row" href="{{ url_for('service_detail', service_id=s.id) }}"><div class="recent-main"><strong>{{ s.client.name }}</strong><span>{{ s.title }} · {{ s.service_date|datebr }}</span></div><span class="badge pending">Resolver</span></a>{% else %}<div class="empty">Nenhum atraso.</div>{% endfor %}</div></div>
+<div class="dash-panel"><div class="dash-panel-head"><h2>▦ Estoque baixo</h2></div><div class="dash-panel-body compact-list">{% for m in low_stock %}<a class="recent-row" href="{{ url_for('materials') }}"><div class="recent-main"><strong>{{ m.name }}</strong><span>{{ m.stock_qty }} {{ m.unit }} em estoque</span></div><span class="badge pending">Repor</span></a>{% else %}<div class="empty">Estoque sem alertas.</div>{% endfor %}</div></div>
+</section>
+{% endif %}
 {% endblock %}
