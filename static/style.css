@@ -306,3 +306,109 @@
   .premium-brand .brand-logo-img{width:220px}.sidebar-contact{bottom:58px}
 }
 @media(max-width:390px){.topbar-wordmark{width:135px}.dashboard-kpis{gap:8px}.dash-kpi{padding:11px;min-height:108px}.dash-kpi strong{font-size:18px}.schedule-time{width:34px;font-size:10px}}
+
+/* ===== Mobile safe-area / toque confortável · 28/08/2026 ===== */
+@media(max-width:760px){
+  html,body{min-height:100%;min-height:100dvh}
+  body.layout-v3{
+    padding-bottom:calc(88px + env(safe-area-inset-bottom));
+    overscroll-behavior-y:none;
+  }
+
+  /* No iPhone instalado na Tela de Início, respeita a área do relógio/notch. */
+  .premium-topbar{
+    position:sticky;
+    top:0;
+    z-index:60;
+    height:auto;
+    min-height:calc(64px + env(safe-area-inset-top));
+    padding:calc(8px + env(safe-area-inset-top)) 14px 8px;
+    align-items:center;
+  }
+  .topbar-left{min-height:48px;gap:10px}
+  .menu-square{
+    display:grid;
+    place-items:center;
+    width:48px;
+    height:48px;
+    min-width:48px;
+    min-height:48px;
+    border-radius:14px;
+    font-size:20px;
+    touch-action:manipulation;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .topbar-wordmark{
+    width:min(148px,42vw);
+    max-height:40px;
+  }
+
+  /* Menu lateral também começa abaixo da área segura do iPhone. */
+  .layout-v3 .premium-sidebar{
+    top:0;
+    height:100vh;
+    height:100dvh;
+    padding-top:calc(14px + env(safe-area-inset-top));
+    padding-bottom:calc(92px + env(safe-area-inset-bottom));
+  }
+  .premium-brand{height:66px!important;padding-bottom:10px!important}
+  .premium-brand .brand-logo-img{width:210px}
+  .premium-nav a{
+    min-height:48px;
+    padding:12px 13px;
+    touch-action:manipulation;
+  }
+
+  /* Dá respiro entre o topo e o primeiro conteúdo clicável. */
+  .mobile-welcome{
+    margin:12px 14px 0;
+  }
+  .premium-content{
+    padding:14px 14px 28px;
+  }
+  .page-head{
+    margin-top:2px;
+  }
+  .page-head .actions .btn,
+  .actions>.btn,
+  .toolbar .btn{
+    min-height:46px;
+  }
+  .input,.select,.textarea{
+    min-height:48px;
+    font-size:16px; /* evita zoom automático do Safari ao focar */
+  }
+
+  /* Barra inferior acima do home indicator e com alvos maiores. */
+  .premium-mobile-nav,
+  .helper-mobile{
+    height:calc(72px + env(safe-area-inset-bottom));
+    padding-bottom:env(safe-area-inset-bottom);
+    z-index:55;
+  }
+  .premium-mobile-nav a,
+  .helper-mobile a{
+    min-height:64px;
+    touch-action:manipulation;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .mobile-fab{
+    bottom:calc(82px + env(safe-area-inset-bottom));
+    min-height:48px;
+    z-index:56;
+  }
+
+  /* Login/primeiro acesso também não encostam na barra superior do iPhone. */
+  .premium-auth,.auth-page{
+    min-height:100vh;
+    min-height:100dvh;
+    padding-top:calc(20px + env(safe-area-inset-top));
+    padding-bottom:calc(20px + env(safe-area-inset-bottom));
+  }
+}
+
+@media(max-width:390px){
+  .topbar-wordmark{width:min(132px,39vw)}
+  .menu-square{width:46px;height:46px;min-width:46px;min-height:46px}
+  .mobile-welcome{margin-top:10px}
+}
