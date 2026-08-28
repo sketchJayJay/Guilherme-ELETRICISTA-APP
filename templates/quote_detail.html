@@ -1,50 +1,186 @@
-{% extends 'base.html' %}{% block content %}
-<div class="detail-hero"><div><h1>Orçamento #{{ quote.id }} · {{ quote.title }}</h1><div class="detail-meta"><span>👤 {{ quote.customer_name }}</span><span>📅 {{ quote.quote_date|datebr }}</span><span class="badge {{ quote.status }}">{{ quote_status_labels[quote.status] }}</span>{% if quote.valid_until %}<span>Validade: {{ quote.valid_until|datebr }}</span>{% endif %}</div></div><div class="row-side"><div class="muted">Total</div><div style="font-size:30px;font-weight:950">{{ quote.total_value|money }}</div></div></div>
-<div class="actions no-print" style="margin-bottom:18px">
-<a class="btn" href="{{ url_for('quote_edit', quote_id=quote.id) }}">Editar</a>
-<a class="btn" target="_blank" href="{{ url_for('quote_print', quote_id=quote.id) }}">🖨 Imprimir / PDF</a>
-<button class="btn success" type="button" id="shareQuotePdf" data-pdf-url="{{ url_for('quote_pdf', quote_id=quote.id) }}" data-filename="orcamento-{{ quote.id }}.pdf" data-title="Orçamento #{{ quote.id }} - {{ quote.customer_name|e }}" data-message="Olá, {{ quote.customer_name|e }}! Segue o orçamento {{ quote.title|e }} no valor de {{ quote.total_value|money }}.">📄 PDF no WhatsApp</button>
-{% if quote.customer_phone %}<a class="btn success" target="_blank" href="https://wa.me/{{ quote.customer_phone|wa }}?text={{ ('Olá, '+quote.customer_name+'! Segue o orçamento '+quote.title+' no valor de '+(quote.total_value|money)+'.')|urlencode }}">💬 Mensagem WhatsApp</a>{% endif %}
+{% extends 'base.html' %}
+{% block content %}
+<div class="detail-hero">
+  <div>
+    <h1>Orçamento #{{ quote.id }} · {{ quote.title }}</h1>
+    <div class="detail-meta">
+      <span>👤 {{ quote.customer_name }}</span>
+      <span>📅 {{ quote.quote_date|datebr }}</span>
+      <span class="badge {{ quote.status }}">{{ quote_status_labels[quote.status] }}</span>
+      {% if quote.valid_until %}<span>Validade: {{ quote.valid_until|datebr }}</span>{% endif %}
+    </div>
+  </div>
+  <div class="row-side">
+    <div class="muted">Total</div>
+    <div style="font-size:30px;font-weight:950">{{ quote.total_value|money }}</div>
+  </div>
 </div>
-<div class="two-col"><div class="card"><div class="card-head"><h2>Itens</h2></div><div class="card-body"><div class="table-wrap"><table class="table"><thead><tr><th>Descrição</th><th>Tipo</th><th>Qtd.</th><th>Unit.</th><th>Subtotal</th></tr></thead><tbody>{% for i in quote.items %}<tr><td>{{ i.description }}</td><td>{{ 'Material' if i.category=='material' else 'Serviço' }}</td><td>{{ i.qty }} {{ i.unit }}</td><td>{{ i.unit_price|money }}</td><td class="money">{{ i.subtotal|money }}</td></tr>{% endfor %}</tbody></table></div></div></div><div class="card"><div class="card-head"><h2>Descrição</h2></div><div class="card-body"><p>{{ quote.description or 'Sem descrição geral.' }}</p>{% if quote.notes %}<p><strong>Condições / observações</strong><br>{{ quote.notes }}</p>{% endif %}</div></div></div>
-<div class="grid"><div class="card"><div class="card-head"><h2>Resumo</h2></div><div class="card-body"><div class="list"><div class="service-row"><span>Serviços</span><strong>{{ quote.labor_value|money }}</strong></div><div class="service-row"><span>Materiais</span><strong>{{ quote.material_value|money }}</strong></div><div class="service-row"><span>Desconto</span><strong>- {{ quote.discount|money }}</strong></div><div class="service-row"><span>Total</span><strong style="font-size:20px">{{ quote.total_value|money }}</strong></div></div></div></div>
-<div class="card"><div class="card-head"><h2>Ações</h2></div><div class="card-body"><div class="actions">{% for k,v in quote_status_labels.items() %}{% if k!=quote.status %}<form method="post" action="{{ url_for('quote_status', quote_id=quote.id) }}"><input type="hidden" name="status" value="{{ k }}"><button class="btn sm" type="submit">{{ v }}</button></form>{% endif %}{% endfor %}</div>{% if not quote.converted_service_id %}<hr style="border:0;border-top:1px solid var(--line);margin:18px 0"><form method="post" action="{{ url_for('quote_convert', quote_id=quote.id) }}" class="form-grid"><div class="field full"><label>Transformar em serviço para o dia</label><input class="input" type="date" name="service_date" value="{{ today.isoformat() }}"></div>{% if employees %}<div class="field"><label>Enviar direto para o ajudante (opcional)</label><select class="select" name="employee_id"><option value="">Não enviar agora</option>{% for e in employees %}<option value="{{ e.id }}">{{ e.name }}</option>{% endfor %}</select></div><div class="field"><label>Valor do ajudante</label><input class="input" name="helper_value" inputmode="decimal" placeholder="Ex.: 150,00"></div>{% endif %}<div class="field full"><button class="btn primary" type="submit">✓ Aprovar e criar serviço</button></div></form>{% else %}<div class="empty" style="margin-top:15px">Já virou serviço.</div><div class="actions" style="margin-top:10px"><a class="btn" href="{{ url_for('service_detail', service_id=quote.converted_service_id) }}">Abrir serviço</a><a class="btn primary" href="{{ url_for('service_detail', service_id=quote.converted_service_id) }}#enviar-ajudante">📲 Enviar para o ajudante</a></div>{% endif %}</div></div></div></div>
-<div class="actions no-print" style="margin-top:18px"><form method="post" action="{{ url_for('quote_delete', quote_id=quote.id) }}" onsubmit="return confirmDelete('Excluir este orçamento?')"><button class="btn danger" type="submit">Excluir orçamento</button></form></div>
+
+<div class="actions no-print quote-main-actions" style="margin-bottom:18px">
+  <a class="btn" href="{{ url_for('quote_edit', quote_id=quote.id) }}">✏️ Editar</a>
+  <a class="btn" target="_blank" href="{{ url_for('quote_print', quote_id=quote.id) }}">🖨 Imprimir / PDF</a>
+  <button class="btn success" type="button" id="shareQuotePdf"
+    data-pdf-url="{{ url_for('quote_pdf', quote_id=quote.id) }}"
+    data-filename="orcamento-{{ quote.id }}.pdf"
+    data-title="Orçamento #{{ quote.id }} - {{ quote.customer_name|e }}"
+    data-message="Olá, {{ quote.customer_name|e }}! Segue o orçamento {{ quote.title|e }} no valor de {{ quote.total_value|money }}.">📄 PDF no WhatsApp</button>
+  {% if quote.customer_phone %}
+  <a class="btn success" target="_blank" href="https://wa.me/{{ quote.customer_phone|wa }}?text={{ ('Olá, '+quote.customer_name+'! Segue o orçamento '+quote.title+' no valor de '+(quote.total_value|money)+'.')|urlencode }}">💬 Mensagem</a>
+  {% endif %}
+</div>
+
+<div class="two-col">
+  <div class="card">
+    <div class="card-head"><h2>Itens</h2></div>
+    <div class="card-body">
+      {% if quote.items %}
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Descrição</th><th>Tipo</th><th>Qtd.</th><th>Unit.</th><th>Subtotal</th></tr></thead>
+        <tbody>{% for i in quote.items %}<tr><td>{{ i.description }}</td><td>{{ 'Material' if i.category=='material' else 'Serviço' }}</td><td>{{ i.qty }} {{ i.unit }}</td><td>{{ i.unit_price|money }}</td><td class="money">{{ i.subtotal|money }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% else %}<div class="empty">Nenhum item lançado.</div>{% endif %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h2>Descrição</h2></div>
+    <div class="card-body">
+      <p>{{ quote.description or 'Sem descrição geral.' }}</p>
+      {% if quote.notes %}<p><strong>Condições / observações</strong><br>{{ quote.notes }}</p>{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="grid quote-bottom-grid" style="margin-top:18px">
+  <div class="card">
+    <div class="card-head"><h2>Resumo</h2></div>
+    <div class="card-body">
+      <div class="list">
+        <div class="service-row"><span>Serviços</span><strong>{{ quote.labor_value|money }}</strong></div>
+        <div class="service-row"><span>Materiais</span><strong>{{ quote.material_value|money }}</strong></div>
+        <div class="service-row"><span>Desconto</span><strong>- {{ quote.discount|money }}</strong></div>
+        <div class="service-row"><span>Total</span><strong style="font-size:20px">{{ quote.total_value|money }}</strong></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>{{ 'Serviço criado' if quote.converted_service_id else 'Aprovar orçamento' }}</h2></div>
+    <div class="card-body">
+      {% if not quote.converted_service_id %}
+      <form method="post" action="{{ url_for('quote_convert', quote_id=quote.id) }}" class="form-grid" id="convertQuoteForm">
+        <div class="field full convert-date-field">
+          <label>Dia do serviço</label>
+          <input class="input input-lg" type="date" id="convertServiceDate" name="service_date" value="{{ today.isoformat() }}" required>
+          <input type="hidden" id="convertServiceDateISO" name="service_date_iso" value="{{ today.isoformat() }}">
+          <div class="date-confirmation" id="convertDateConfirmation">📅 Serviço será criado para <strong>{{ today|datebr }}</strong></div>
+        </div>
+        {% if employees %}
+        <div class="field">
+          <label>Enviar para ajudante</label>
+          <select class="select" name="employee_id" id="convertEmployee">
+            <option value="">Não enviar agora</option>
+            {% for e in employees %}<option value="{{ e.id }}">{{ e.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field" id="helperValueField">
+          <label>Valor do ajudante</label>
+          <input class="input" name="helper_value" inputmode="decimal" placeholder="Ex.: 150,00">
+        </div>
+        {% endif %}
+        <div class="field full"><button class="btn primary btn-lg" type="submit">✓ Aprovar e criar serviço</button></div>
+      </form>
+      {% else %}
+      <div class="empty">Este orçamento já foi aprovado e transformado em serviço.</div>
+      <div class="actions" style="margin-top:10px">
+        <a class="btn primary" href="{{ url_for('service_detail', service_id=quote.converted_service_id) }}">Abrir serviço</a>
+        <a class="btn" href="{{ url_for('service_detail', service_id=quote.converted_service_id) }}#enviar-ajudante">📲 Enviar para ajudante</a>
+      </div>
+      {% endif %}
+
+      <details class="more-options quote-more-actions" style="margin-top:16px">
+        <summary>Outras ações <span>status e exclusão</span></summary>
+        <div class="more-options-body">
+          <div class="actions">
+            {% for k,v in quote_status_labels.items() %}
+              {% if k != quote.status and k != 'approved' %}
+              <form method="post" action="{{ url_for('quote_status', quote_id=quote.id) }}">
+                <input type="hidden" name="status" value="{{ k }}">
+                <button class="btn sm" type="submit">{{ v }}</button>
+              </form>
+              {% endif %}
+            {% endfor %}
+          </div>
+          <form method="post" action="{{ url_for('quote_delete', quote_id=quote.id) }}" onsubmit="return confirmDelete('Excluir este orçamento?')" style="margin-top:12px">
+            <button class="btn danger" type="submit">Excluir orçamento</button>
+          </form>
+        </div>
+      </details>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 (function () {
+  const dateInput = document.getElementById('convertServiceDate');
+  const hiddenDate = document.getElementById('convertServiceDateISO');
+  const dateConfirmation = document.getElementById('convertDateConfirmation');
+  const convertForm = document.getElementById('convertQuoteForm');
+
+  function syncServiceDate() {
+    if (!dateInput || !hiddenDate) return;
+    hiddenDate.value = dateInput.value || '';
+    if (dateConfirmation && dateInput.value) {
+      const parts = dateInput.value.split('-');
+      const pretty = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : dateInput.value;
+      dateConfirmation.innerHTML = `📅 Serviço será criado para <strong>${pretty}</strong>`;
+    }
+  }
+  if (dateInput) {
+    dateInput.addEventListener('input', syncServiceDate);
+    dateInput.addEventListener('change', syncServiceDate);
+    syncServiceDate();
+  }
+  if (convertForm) {
+    convertForm.addEventListener('submit', function (event) {
+      syncServiceDate();
+      if (!hiddenDate || !hiddenDate.value) {
+        event.preventDefault();
+        alert('Escolha o dia do serviço antes de aprovar.');
+      }
+    });
+  }
+
+  const employee = document.getElementById('convertEmployee');
+  const helperField = document.getElementById('helperValueField');
+  function toggleHelperValue() {
+    if (!employee || !helperField) return;
+    helperField.style.opacity = employee.value ? '1' : '.55';
+  }
+  if (employee) {
+    employee.addEventListener('change', toggleHelperValue);
+    toggleHelperValue();
+  }
+
   const button = document.getElementById('shareQuotePdf');
   if (!button) return;
-
   button.addEventListener('click', async function () {
     const originalText = button.innerHTML;
     button.disabled = true;
     button.innerHTML = '⏳ Preparando PDF...';
-
     try {
       const response = await fetch(button.dataset.pdfUrl, { credentials: 'same-origin', cache: 'no-store' });
       if (!response.ok) throw new Error('Não foi possível gerar o PDF.');
-
       const blob = await response.blob();
       const file = new File([blob], button.dataset.filename || 'orcamento.pdf', { type: 'application/pdf' });
-      const shareData = {
-        title: button.dataset.title || 'Orçamento',
-        text: button.dataset.message || 'Segue o orçamento em PDF.',
-        files: [file]
-      };
-
+      const shareData = { title: button.dataset.title || 'Orçamento', text: button.dataset.message || 'Segue o orçamento em PDF.', files: [file] };
       if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
         await navigator.share(shareData);
       } else {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url;
-        a.download = file.name;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+        a.href = url; a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1500);
         alert('O PDF foi baixado. Abra o WhatsApp e anexe o arquivo ao cliente.');
       }

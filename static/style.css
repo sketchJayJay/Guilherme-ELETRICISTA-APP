@@ -160,3 +160,30 @@
   .helper-stats{grid-template-columns:1fr 1fr!important}
   .notification-row{align-items:flex-start}
 }
+
+/* ===== Identidade Guilherme Elétrica e Climatização ===== */
+.brand-logo-wrap{display:grid;gap:6px;align-items:start;padding:2px 6px 18px}
+.brand-logo-img{display:block;width:100%;max-width:214px;height:auto;object-fit:contain;object-position:left center}
+.brand-logo-wrap small{display:block;color:var(--muted);font-size:11px;padding-left:2px}
+.auth-brand-logo{display:block;width:min(330px,100%);height:auto;max-height:116px;object-fit:contain;object-position:left center;margin:0 0 18px}
+.quote-bottom-grid{grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr)}
+.date-confirmation{padding:10px 12px;border-radius:11px;background:rgba(56,217,150,.08);border:1px solid rgba(56,217,150,.2);color:#b9f7dc;font-size:13px}
+.quote-more-actions summary{padding-top:12px;padding-bottom:12px}
+
+@media(max-width:760px){
+  .brand-logo-img{max-width:218px}
+  .quote-bottom-grid{grid-template-columns:1fr}
+  .quote-main-actions{display:grid;grid-template-columns:1fr 1fr}
+  .quote-main-actions .btn{width:100%;min-width:0;white-space:normal}
+  .convert-date-field .input-lg{font-size:17px;font-weight:800}
+  .date-confirmation{font-size:13px;line-height:1.4}
+  .table td[data-label="Ações"]{display:block;text-align:left}
+  .table td[data-label="Ações"]::before{display:block;margin-bottom:8px}
+  .table td[data-label="Ações"] .actions{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .table td[data-label="Ações"] .actions .btn,.table td[data-label="Ações"] .actions form{width:100%;min-width:0}
+  .table td[data-label="Ações"] .btn{white-space:nowrap;font-size:12px;padding:9px 7px}
+}
+@media(max-width:390px){
+  .quote-main-actions{grid-template-columns:1fr}
+  .table td[data-label="Ações"] .actions{grid-template-columns:1fr 1fr}
+}

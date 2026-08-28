@@ -1,7 +1,7 @@
 self.addEventListener('push', event => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch(e) { data = {body: event.data ? event.data.text() : ''}; }
-  const title = data.title || 'Guilherme Elétrica';
+  const title = data.title || 'Guilherme Elétrica e Climatização';
   const options = {
     body: data.body || 'Você tem um novo serviço.',
     icon: '/static/icon-192.png',

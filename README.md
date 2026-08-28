@@ -1,4 +1,4 @@
-# Guilherme Elétrica
+# Guilherme Elétrica e Climatização
 
 Sistema web responsivo para a rotina de um eletricista, pensado em **serviços por dia**, com horário opcional e cronômetro quando o trabalho for cobrado por tempo.
 

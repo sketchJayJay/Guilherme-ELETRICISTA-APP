@@ -30,7 +30,7 @@ from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether, Image as RLImage
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DATA_DIR = os.getenv("DATA_DIR", os.path.join(BASE_DIR, "data"))
@@ -63,7 +63,7 @@ class User(db.Model):
 
 class AppSettings(db.Model):
     id = db.Column(db.Integer, primary_key=True, default=1)
-    business_name = db.Column(db.String(120), default="Guilherme Elétrica")
+    business_name = db.Column(db.String(120), default="Guilherme Elétrica e Climatização")
     owner_name = db.Column(db.String(120), default="Guilherme")
     phone = db.Column(db.String(40), default="")
     whatsapp = db.Column(db.String(40), default="")
@@ -407,10 +407,13 @@ def decimal_or_zero(v):
 def parse_date(v, default=None):
     if not v:
         return default
-    try:
-        return datetime.strptime(v, "%Y-%m-%d").date()
-    except ValueError:
-        return default
+    value = str(v).strip()
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            pass
+    return default
 
 
 def parse_time(v):
@@ -779,8 +782,12 @@ def start_daily_notification_scheduler():
 def get_settings():
     settings = db.session.get(AppSettings, 1)
     if not settings:
-        settings = AppSettings(id=1)
+        settings = AppSettings(id=1, business_name="Guilherme Elétrica e Climatização")
         db.session.add(settings)
+        db.session.commit()
+    elif (settings.business_name or "").strip() in {"", "Guilherme Elétrica"}:
+        # Atualiza instalações já existentes sem sobrescrever um nome personalizado.
+        settings.business_name = "Guilherme Elétrica e Climatização"
         db.session.commit()
     return settings
 
@@ -798,8 +805,8 @@ def is_employee_session():
 def inject_globals():
     return {
         "app_settings": get_settings(),
-        "today": date.today(),
-        "now": datetime.now(),
+        "today": local_today(),
+        "now": datetime.now(APP_TZ),
         "timedelta": timedelta,
         "current_employee": current_employee(),
         "is_employee": is_employee_session(),
@@ -906,7 +913,7 @@ def setup():
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
-        business_name = request.form.get("business_name", "Guilherme Elétrica").strip()
+        business_name = request.form.get("business_name", "Guilherme Elétrica e Climatização").strip()
         owner_name = request.form.get("owner_name", "Guilherme").strip()
         if not username or len(password) < 4:
             flash("Informe um usuário e uma senha com pelo menos 4 caracteres.", "error")
@@ -914,7 +921,7 @@ def setup():
         user = User(username=username, password_hash=generate_password_hash(password))
         db.session.add(user)
         settings = get_settings()
-        settings.business_name = business_name or "Guilherme Elétrica"
+        settings.business_name = business_name or "Guilherme Elétrica e Climatização"
         settings.owner_name = owner_name or "Guilherme"
         db.session.commit()
         session.clear()
@@ -1957,7 +1964,12 @@ def quote_convert(quote_id):
         db.session.flush()
         quote.client_id = client.id
 
-    service_date = parse_date(request.form.get("service_date"), date.today())
+    raw_service_date = (request.form.get("service_date") or request.form.get("service_date_iso") or "").strip()
+    service_date = parse_date(raw_service_date)
+    if not service_date:
+        flash("Escolha a data do serviço antes de aprovar o orçamento. O serviço não foi criado.", "error")
+        return redirect(url_for("quote_detail", quote_id=quote.id))
+
     service = Service(
         client_id=client.id,
         title=quote.title,
@@ -2011,6 +2023,7 @@ def quote_convert(quote_id):
             app.logger.warning("Serviço criado, mas disparo do push ao ajudante falhou: %s", exc)
 
     base_msg = "Orçamento aprovado e transformado em serviço. O cliente foi cadastrado automaticamente." if quote.is_guest else "Orçamento aprovado e transformado em serviço."
+    base_msg += f" Data do serviço: {service.service_date.strftime('%d/%m/%Y')}."
     if assignment:
         base_msg += f" Serviço enviado para {employee.name}."
     flash(base_msg, "success")
@@ -2046,7 +2059,7 @@ def build_quote_pdf(quote):
         topMargin=15 * mm,
         bottomMargin=15 * mm,
         title=f"Orçamento #{quote.id} - {quote.customer_name}",
-        author=settings.business_name or "Guilherme Elétrica",
+        author=settings.business_name or "Guilherme Elétrica e Climatização",
     )
 
     styles = getSampleStyleSheet()
@@ -2077,10 +2090,18 @@ def build_quote_pdf(quote):
         business_meta.append(str(settings.phone))
     if settings.city:
         business_meta.append(str(settings.city))
-    left = [
-        Paragraph(xml_escape(str(settings.business_name or "Guilherme Elétrica")), styles["QuoteTitle"]),
-        Paragraph(xml_escape(" · ".join(business_meta)), styles["QuoteSmall"]) if business_meta else Paragraph("", styles["QuoteSmall"]),
-    ]
+    logo_path = os.path.join(BASE_DIR, "static", "brand-logo.png")
+    if os.path.exists(logo_path):
+        logo = RLImage(logo_path, width=62 * mm, height=21.8 * mm)
+        left = [
+            logo,
+            Paragraph(xml_escape(" · ".join(business_meta)), styles["QuoteSmall"]) if business_meta else Paragraph("", styles["QuoteSmall"]),
+        ]
+    else:
+        left = [
+            Paragraph(xml_escape(str(settings.business_name or "Guilherme Elétrica e Climatização")), styles["QuoteTitle"]),
+            Paragraph(xml_escape(" · ".join(business_meta)), styles["QuoteSmall"]) if business_meta else Paragraph("", styles["QuoteSmall"]),
+        ]
     validity = f"<br/>Válido até {quote.valid_until.strftime('%d/%m/%Y')}" if quote.valid_until else ""
     right = Paragraph(
         f"<b>ORÇAMENTO #{quote.id}</b><br/>{quote.quote_date.strftime('%d/%m/%Y') if quote.quote_date else ''}{validity}",
