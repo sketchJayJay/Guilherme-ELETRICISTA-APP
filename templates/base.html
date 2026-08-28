@@ -41,7 +41,7 @@
 <div class="sidebar-overlay no-print" onclick="closeSidebar()"></div>
 <main class="main">
 <header class="topbar no-print">
-  <div style="display:flex;align-items:center;gap:10px"><button class="btn sm menu-btn" onclick="toggleSidebar()">☰</button><div><div class="hello">Olá, {{ current_employee.name if is_employee and current_employee else (app_settings.owner_name or 'Guilherme') }} 👋</div><div class="date">{{ now.strftime('%d/%m/%Y') }}</div></div></div>
+  <div class="topbar-left"><button class="btn sm menu-btn" onclick="toggleSidebar()">☰</button><img class="topbar-brand-icon" src="{{ url_for('static', filename='icon-192.png') }}" alt=""><div><div class="hello">Olá, {{ current_employee.name if is_employee and current_employee else (app_settings.owner_name or 'Guilherme') }} 👋</div><div class="date">{{ now.strftime('%d/%m/%Y') }}</div></div></div>
   {% if not is_employee %}<div class="right-actions actions"><a class="btn sm" href="{{ url_for('client_new') }}">+ Cliente</a><a class="btn primary sm" href="{{ url_for('service_new') }}">+ Novo serviço</a></div>{% endif %}
 </header>
 <div class="content">

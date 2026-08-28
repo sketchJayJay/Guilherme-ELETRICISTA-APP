@@ -2092,7 +2092,7 @@ def build_quote_pdf(quote):
         business_meta.append(str(settings.city))
     logo_path = os.path.join(BASE_DIR, "static", "brand-logo.png")
     if os.path.exists(logo_path):
-        logo = RLImage(logo_path, width=62 * mm, height=21.8 * mm)
+        logo = RLImage(logo_path, width=70 * mm, height=22.9 * mm)
         left = [
             logo,
             Paragraph(xml_escape(" · ".join(business_meta)), styles["QuoteSmall"]) if business_meta else Paragraph("", styles["QuoteSmall"]),
