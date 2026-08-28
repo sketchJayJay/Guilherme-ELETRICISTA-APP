@@ -15,13 +15,13 @@
 
 <section class="dashboard-kpis">
   <a class="dash-kpi kpi-yellow" href="{{ url_for('agenda', view='day', date=today.isoformat()) }}">
-    <div class="dash-kpi-icon">▣</div><div><small>Serviços Hoje</small><strong>{{ today_services|length }}</strong><span>Ver agenda →</span></div>
+    <div class="dash-kpi-icon">⚡</div><div><small>Serviços Hoje</small><strong>{{ today_services|length }}</strong><span>Ver agenda →</span></div>
   </a>
   <a class="dash-kpi kpi-blue" href="{{ url_for('clients') }}">
-    <div class="dash-kpi-icon">♙</div><div><small>Clientes</small><strong>{{ client_count }}</strong><span>Ver clientes →</span></div>
+    <div class="dash-kpi-icon">👥</div><div><small>Clientes</small><strong>{{ client_count }}</strong><span>Ver clientes →</span></div>
   </a>
   <a class="dash-kpi kpi-green" href="{{ url_for('finance') }}">
-    <div class="dash-kpi-icon">$</div><div><small>Recebimentos</small><strong>{{ month_income|money }}</strong><span>Este mês →</span></div>
+    <div class="dash-kpi-icon">↗</div><div><small>Recebimentos</small><strong>{{ month_income|money }}</strong><span>Este mês →</span></div>
   </a>
   <a class="dash-kpi kpi-purple" href="{{ url_for('quotes') }}">
     <div class="dash-kpi-icon">▤</div><div><small>Orçamentos</small><strong>{{ open_quote_count }}</strong><span>Em aberto →</span></div>
