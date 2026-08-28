@@ -1,0 +1,3 @@
+- Adicionada logo específica para documentos (OS e orçamento) em `static/brand-logo-doc.png`.
+- Atualizados os templates `service_print.html` e `quote_print.html` para usar a nova logo limpa, sem fundo, mais adequada para impressão/PDF.
+- Cabeçalhos de impressão refinados para melhor legibilidade.

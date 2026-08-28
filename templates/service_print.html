@@ -1,6 +1,75 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>OS #{{ service.id }}</title><style>body{font-family:Arial,sans-serif;color:#111;margin:35px}header{display:flex;justify-content:space-between;border-bottom:3px solid #111;padding-bottom:15px;margin-bottom:20px}.logo{font-size:25px;font-weight:800}.brand-print-logo{width:295px;max-height:96px;object-fit:contain;object-position:left center;display:block;filter:drop-shadow(0 2px 2px rgba(0,0,0,.26))}.bolt{color:#e6b800}.meta{text-align:right;color:#555}.box{border:1px solid #bbb;border-radius:10px;padding:14px;margin:12px 0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{padding:9px;border-bottom:1px solid #ddd;text-align:left}.right{text-align:right}.total{font-size:22px;font-weight:bold}.muted{color:#666}.sign{display:grid;grid-template-columns:1fr 1fr;gap:50px;margin-top:70px}.sign div{border-top:1px solid #333;padding-top:6px;text-align:center}.no-print{margin-bottom:20px}@media print{.no-print{display:none}body{margin:15mm}}</style></head><body><div class="no-print"><button onclick="window.print()">Imprimir / Salvar PDF</button></div><header><div><div class="logo"><img class="brand-print-logo" src="{{ url_for('static', filename='brand-logo.png') }}" alt="{{ app_settings.business_name }}"></div><div class="muted">{{ app_settings.phone }}{% if app_settings.city %} · {{ app_settings.city }}{% endif %}</div></div><div class="meta"><strong>ORDEM DE SERVIÇO #{{ service.id }}</strong><br>{{ service.service_date|datebr }}</div></header>
-<div class="grid"><div class="box"><strong>Cliente</strong><br>{{ service.client.name }}<br>{{ service.client.phone }}<br>{{ service.client.cpf_cnpj }}</div><div class="box"><strong>Local do serviço</strong><br>{{ service.address or service.client.address }}<br>{% if service.all_day %}Sem horário definido{% else %}Horário: {{ service.service_time|timebr }}{% endif %}</div></div>
-<div class="box"><strong>Serviço</strong><h2>{{ service.title }}</h2><div>{{ service.description or 'Sem descrição.' }}</div></div>
-{% if service.service_materials %}<div class="box"><strong>Materiais</strong><table><thead><tr><th>Item</th><th>Qtd.</th><th class="right">Unit.</th><th class="right">Subtotal</th></tr></thead><tbody>{% for i in service.service_materials %}<tr><td>{{ i.description }}</td><td>{{ i.qty }} {{ i.unit }}</td><td class="right">{{ i.unit_price|money }}</td><td class="right">{{ i.subtotal|money }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
-<div class="box"><table><tr><td>Mão de obra</td><td class="right">{{ service.labor_value|money }}</td></tr><tr><td>Materiais</td><td class="right">{{ service.material_value|money }}</td></tr><tr><td>Desconto</td><td class="right">- {{ service.discount|money }}</td></tr><tr><td><strong>Total</strong></td><td class="right total">{{ service.total_value|money }}</td></tr><tr><td>Recebido</td><td class="right">{{ service.amount_paid|money }} · {{ service.payment_method }}</td></tr></table></div>
-{% if service.notes %}<div class="box"><strong>Observações</strong><br>{{ service.notes }}</div>{% endif %}{% if service.signature %}<div class="box"><strong>Assinatura do cliente</strong><div style="margin-top:10px;text-align:center"><img src="{{ url_for('uploaded_media', filename=service.signature.filename) }}" style="max-width:340px;max-height:150px;object-fit:contain"><div class="muted">{{ service.signature.signer_name or service.client.name }} · {{ service.signature.signed_at.strftime('%d/%m/%Y %H:%M') }}</div></div></div>{% endif %}<div class="sign"><div>{{ app_settings.owner_name }}</div><div>{{ service.client.name }}</div></div><p class="muted" style="text-align:center;margin-top:35px">{{ app_settings.footer_text }}</p></body></html>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>OS #{{ service.id }}</title>
+  <style>
+    body{font-family:Arial,sans-serif;color:#111;margin:35px}
+    header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #111;padding-bottom:15px;margin-bottom:20px;gap:20px}
+    .brand-block{display:flex;flex-direction:column;gap:8px}
+    .brand-print-logo{width:360px;max-width:100%;max-height:90px;object-fit:contain;object-position:left center;display:block}
+    .meta{text-align:right;color:#555;line-height:1.35}
+    .meta strong{font-size:17px;color:#222}
+    .box{border:1px solid #bbb;border-radius:10px;padding:14px;margin:12px 0}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    table{width:100%;border-collapse:collapse;margin-top:10px}
+    th,td{padding:9px;border-bottom:1px solid #ddd;text-align:left}
+    .right{text-align:right}
+    .total{font-size:22px;font-weight:bold}
+    .muted{color:#666}
+    .sign{display:grid;grid-template-columns:1fr 1fr;gap:50px;margin-top:70px}
+    .sign div{border-top:1px solid #333;padding-top:6px;text-align:center}
+    .no-print{margin-bottom:20px}
+    @media print{
+      .no-print{display:none}
+      body{margin:15mm}
+    }
+  </style>
+</head>
+<body>
+  <div class="no-print"><button onclick="window.print()">Imprimir / Salvar PDF</button></div>
+
+  <header>
+    <div class="brand-block">
+      <img class="brand-print-logo" src="{{ url_for('static', filename='brand-logo-doc.png') }}" alt="{{ app_settings.business_name }}">
+      <div class="muted">{{ app_settings.business_name }}{% if app_settings.phone %} · {{ app_settings.phone }}{% endif %}{% if app_settings.city %} · {{ app_settings.city }}{% endif %}</div>
+    </div>
+    <div class="meta">
+      <strong>ORDEM DE SERVIÇO #{{ service.id }}</strong><br>
+      {{ service.service_date|datebr }}
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="box"><strong>Cliente</strong><br>{{ service.client.name }}<br>{{ service.client.phone or '' }}</div>
+    <div class="box"><strong>Local do serviço</strong><br>{{ service.location or service.client.address or '-' }}<br>{% if service.has_time and service.time %}{{ service.time }}{% else %}Sem horário definido{% endif %}</div>
+  </div>
+
+  <div class="box">
+    <strong>Serviço</strong>
+    <h2>{{ service.title }}</h2>
+    <div>{{ service.description or 'Sem descrição.' }}</div>
+  </div>
+
+  <div class="box">
+    <table>
+      <tr><td>Mão de obra</td><td class="right">{{ service.labor_value|money }}</td></tr>
+      <tr><td>Materiais</td><td class="right">{{ service.material_value|money }}</td></tr>
+      <tr><td>Desconto</td><td class="right">- {{ service.discount|money }}</td></tr>
+      <tr><td><strong>Total</strong></td><td class="right total">{{ service.total_value|money }}</td></tr>
+      <tr><td>Recebido</td><td class="right">{{ service.received_value|money }}</td></tr>
+    </table>
+  </div>
+
+  {% if service.notes %}
+  <div class="box"><strong>Observações</strong><br>{{ service.notes }}</div>
+  {% endif %}
+
+  <div class="sign">
+    <div>{{ app_settings.owner_name or 'Responsável' }}</div>
+    <div>{{ service.client.name }}</div>
+  </div>
+
+  <p class="muted" style="text-align:center;margin-top:30px">{{ app_settings.footer_text }}</p>
+</body>
+</html>
