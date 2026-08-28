@@ -1,0 +1,2 @@
+- Ajustado o contraste dos botões verdes/azuis no layout Impact V5.
+- `PDF no WhatsApp`, `Mensagem` e outros botões de ação agora usam texto branco para melhor legibilidade no tema escuro.
