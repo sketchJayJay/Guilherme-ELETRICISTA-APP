@@ -93,8 +93,8 @@
 <a href="{{ url_for('agenda') }}" class="{% if request.endpoint=='agenda' %}active{% endif %}"><span>▣</span>Agenda</a>
 <a href="{{ url_for('services') }}" class="{% if request.endpoint and request.endpoint.startswith('service') %}active{% endif %}"><span>⌁</span>Serviços</a>
 <a href="{{ url_for('finance') }}" class="{% if request.endpoint and request.endpoint.startswith('finance') %}active{% endif %}"><span>$</span>Financeiro</a>
-<a href="#" onclick="toggleSidebar();return false"><span>•••</span>Mais</a>
+<a href="#" class="mobile-more" onclick="toggleSidebar();return false"><span>•••</span>Mais</a>
 </nav>
 {% endif %}
-<script src="{{ url_for('static', filename='app.js') }}?v=20260828-stable1"></script>{% block scripts %}{% endblock %}
+<script src="{{ url_for('static', filename='app.js') }}?v=20260828-stable2"></script>{% block scripts %}{% endblock %}
 </body></html>

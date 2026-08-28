@@ -10,9 +10,12 @@ function closeSidebar(){
   document.body.classList.remove('sidebar-open');
 }
 document.addEventListener('click',e=>{
-  const s=document.querySelector('.sidebar');
-  if(!s)return;
-  if(s.classList.contains('open')&&!s.contains(e.target)&&!e.target.closest('.menu-btn')) closeSidebar();
+  const sidebar=document.querySelector('.sidebar');
+  if(!sidebar)return;
+  // Não feche o menu no mesmo toque que acabou de abri-lo.
+  // O layout premium usa .menu-square no topo e .mobile-more na barra inferior.
+  if(e.target.closest('.menu-square, .mobile-more')) return;
+  if(sidebar.classList.contains('open') && !sidebar.contains(e.target)) closeSidebar();
 });
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSidebar()});
 function confirmDelete(msg='Tem certeza que deseja excluir?'){return window.confirm(msg)}
