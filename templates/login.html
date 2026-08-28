@@ -2,22 +2,28 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#07111f">
+<meta name="theme-color" content="#050b14">
 <title>Entrar · Guilherme Elétrica e Climatização</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260828-stable1">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260828-impact1">
 </head>
-<body class="auth-page premium-auth">
-<div class="auth-energy auth-energy-yellow"></div><div class="auth-energy auth-energy-blue"></div>
-<div class="auth-card premium-auth-card">
-  <img class="auth-brand-logo" src="{{ url_for('static', filename='brand-logo.png') }}" alt="Guilherme Elétrica e Climatização">
-  <h1>Bem-vindo!</h1>
-  <p>Faça seu login para continuar</p>
-  {% with messages=get_flashed_messages(with_categories=true) %}{% for cat,msg in messages %}<div class="flash {{ cat }}" style="margin-bottom:12px">{{ msg }}</div>{% endfor %}{% endwith %}
-  <form method="post" class="grid auth-form">
-    <div class="field"><label>Usuário</label><div class="auth-input-wrap"><span>♙</span><input class="input" name="username" placeholder="Usuário" autofocus required></div></div>
-    <div class="field"><label>Senha</label><div class="auth-input-wrap"><span>▣</span><input class="input" type="password" name="password" placeholder="Senha" required></div></div>
-    <button class="btn auth-submit" type="submit">Entrar <span>→</span></button>
-  </form>
-  <div class="auth-footer"><span>⚡</span><span>❄</span><small>Qualidade e confiança em cada serviço!</small></div>
+<body class="auth-page premium-auth v5-auth">
+<div class="v5-auth-frame">
+  <div class="v5-auth-brand-side">
+    <img class="auth-brand-logo" src="{{ url_for('static', filename='brand-logo.png') }}" alt="Guilherme Elétrica e Climatização">
+    <div class="v5-auth-line"><span class="hot">ϟ</span><span></span><span class="cold">❄</span></div>
+    <h2>Elétrica e climatização em um só lugar.</h2>
+    <p>Organize clientes, serviços, agenda, equipe e financeiro pelo celular.</p>
+  </div>
+  <div class="auth-card premium-auth-card v5-login-card">
+    <div class="login-mark">GE</div>
+    <h1>Bem-vindo!</h1>
+    <p>Entre para continuar sua rotina.</p>
+    {% with messages=get_flashed_messages(with_categories=true) %}{% for cat,msg in messages %}<div class="flash {{ cat }}" style="margin-bottom:12px">{{ msg }}</div>{% endfor %}{% endwith %}
+    <form method="post" class="grid auth-form">
+      <div class="field"><label>Usuário</label><div class="auth-input-wrap"><span>♙</span><input class="input" name="username" placeholder="Usuário" autofocus required></div></div>
+      <div class="field"><label>Senha</label><div class="auth-input-wrap"><span>▣</span><input class="input" type="password" name="password" placeholder="Senha" required></div></div>
+      <button class="btn auth-submit" type="submit">Entrar <span>→</span></button>
+    </form>
+  </div>
 </div>
 </body></html>

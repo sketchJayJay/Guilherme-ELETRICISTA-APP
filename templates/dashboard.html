@@ -1,36 +1,48 @@
 {% extends 'base.html' %}
 {% block title %}Início · {{ app_settings.business_name }}{% endblock %}
 {% block content %}
-<section class="dashboard-hero">
-  <div class="hero-copy">
-    <img src="{{ url_for('static', filename='brand-logo.png') }}" class="hero-logo" alt="{{ app_settings.business_name }}">
-    <div class="hero-tagline">Qualidade e confiança em cada serviço!</div>
+<section class="v5-hero">
+  <div class="v5-hero-copy">
+    <div class="v5-eyebrow">PAINEL DO DIA</div>
+    <h1>{% if now.hour < 12 %}Bom dia{% elif now.hour < 18 %}Boa tarde{% else %}Boa noite{% endif %}, <span>{{ app_settings.owner_name or 'Guilherme' }}!</span> <i>👋</i></h1>
+    <p>{{ now.strftime('%d/%m/%Y') }} · Bora pra mais um dia de serviço!</p>
   </div>
-  <div class="hero-energy" aria-hidden="true">
-    <div class="hero-electric">⚡</div>
-    <div class="hero-divider"></div>
-    <div class="hero-cold">❄</div>
+  <div class="v5-energy-scene" aria-hidden="true">
+    <div class="v5-ac"><div class="v5-ac-slot"></div><div class="v5-air v5-air-1"></div><div class="v5-air v5-air-2"></div></div>
+    <div class="v5-bolt">ϟ</div>
   </div>
 </section>
 
-<section class="dashboard-kpis">
+<section class="dashboard-kpis v5-kpis">
   <a class="dash-kpi kpi-yellow" href="{{ url_for('agenda', view='day', date=today.isoformat()) }}">
-    <div class="dash-kpi-icon">⚡</div><div><small>Serviços Hoje</small><strong>{{ today_services|length }}</strong><span>Ver agenda →</span></div>
+    <div class="dash-kpi-top"><div class="dash-kpi-icon">ϟ</div><small>SERVIÇOS HOJE</small></div>
+    <strong>{{ today_services|length }}</strong>
+    <svg class="mini-chart" viewBox="0 0 110 28" aria-hidden="true"><path d="M0 25 L10 22 L20 23 L30 14 L40 18 L50 7 L60 14 L70 10 L80 18 L90 12 L100 17 L110 8"/></svg>
+    <span>Ver todos →</span>
   </a>
   <a class="dash-kpi kpi-blue" href="{{ url_for('clients') }}">
-    <div class="dash-kpi-icon">👥</div><div><small>Clientes</small><strong>{{ client_count }}</strong><span>Ver clientes →</span></div>
+    <div class="dash-kpi-top"><div class="dash-kpi-icon">♙</div><small>CLIENTES</small></div>
+    <strong>{{ client_count }}</strong>
+    <svg class="mini-chart" viewBox="0 0 110 28" aria-hidden="true"><path d="M0 22 L10 18 L20 20 L30 12 L40 16 L50 9 L60 13 L70 6 L80 12 L90 8 L100 10 L110 4"/></svg>
+    <span>Ver todos →</span>
   </a>
   <a class="dash-kpi kpi-green" href="{{ url_for('finance') }}">
-    <div class="dash-kpi-icon">↗</div><div><small>Recebimentos</small><strong>{{ month_income|money }}</strong><span>Este mês →</span></div>
+    <div class="dash-kpi-top"><div class="dash-kpi-icon">$</div><small>RECEBIMENTOS (MÊS)</small></div>
+    <strong>{{ month_income|money }}</strong>
+    <svg class="mini-chart" viewBox="0 0 110 28" aria-hidden="true"><path d="M0 24 L10 20 L20 21 L30 16 L40 18 L50 10 L60 13 L70 7 L80 11 L90 6 L100 8 L110 3"/></svg>
+    <span>Ver detalhes →</span>
   </a>
   <a class="dash-kpi kpi-purple" href="{{ url_for('quotes') }}">
-    <div class="dash-kpi-icon">▤</div><div><small>Orçamentos</small><strong>{{ open_quote_count }}</strong><span>Em aberto →</span></div>
+    <div class="dash-kpi-top"><div class="dash-kpi-icon">▤</div><small>ORÇAMENTOS</small></div>
+    <strong>{{ open_quote_count }}</strong>
+    <svg class="mini-chart" viewBox="0 0 110 28" aria-hidden="true"><path d="M0 24 L10 22 L20 17 L30 19 L40 13 L50 15 L60 10 L70 12 L80 7 L90 10 L100 5 L110 6"/></svg>
+    <span>Em aberto →</span>
   </a>
 </section>
 
-<section class="dashboard-columns">
-  <div class="dash-panel">
-    <div class="dash-panel-head"><h2>◷ Serviços recentes</h2><a href="{{ url_for('services') }}">Ver todos →</a></div>
+<section class="dashboard-columns v5-panels">
+  <div class="dash-panel v5-recent-panel">
+    <div class="dash-panel-head"><h2><span class="panel-icon">◷</span> Serviços recentes</h2><a href="{{ url_for('services') }}">Ver todos →</a></div>
     <div class="dash-panel-body compact-list">
       {% for s in recent_services %}
       <a class="recent-row" href="{{ url_for('service_detail', service_id=s.id) }}">
@@ -43,12 +55,12 @@
     </div>
   </div>
 
-  <div class="dash-panel">
-    <div class="dash-panel-head"><h2>▣ Próximos agendamentos</h2><a href="{{ url_for('agenda') }}">Ver agenda →</a></div>
+  <div class="dash-panel v5-schedule-panel">
+    <div class="dash-panel-head"><h2><span class="panel-icon">▣</span> Próximos agendamentos</h2><a href="{{ url_for('agenda') }}">Ver agenda →</a></div>
     <div class="dash-panel-body compact-list">
       {% for s in upcoming[:5] %}
       <a class="schedule-row" href="{{ url_for('service_detail', service_id=s.id) }}">
-        <div class="schedule-time">{% if s.all_day %}Dia{% else %}{{ s.service_time|timebr }}{% endif %}</div>
+        <div class="schedule-time">{% if s.all_day %}DIA{% else %}{{ s.service_time|timebr }}{% endif %}</div>
         <div class="schedule-dot {% if loop.index is even %}blue{% else %}yellow{% endif %}"></div>
         <div class="schedule-main"><strong>{{ s.client.name }}</strong><span>{{ s.title }}</span></div>
         <div class="schedule-date">{{ s.service_date|datebr }}</div>
@@ -58,10 +70,10 @@
   </div>
 </section>
 
-<section class="dashboard-actions">
-  <a class="quick-action quick-yellow" href="{{ url_for('quote_new') }}"><span>＋</span>Novo Orçamento</a>
-  <a class="quick-action quick-blue" href="{{ url_for('service_new', date=today.isoformat()) }}"><span>⌁</span>Novo Serviço</a>
-  <a class="quick-action quick-green" href="{{ url_for('client_new') }}"><span>♙</span>Novo Cliente</a>
+<section class="dashboard-actions v5-actions">
+  <a class="quick-action quick-yellow" href="{{ url_for('quote_new') }}"><span class="qa-icon">▤</span><span class="qa-copy"><strong>Novo Orçamento</strong><small>Criar orçamento rápido</small></span></a>
+  <a class="quick-action quick-blue" href="{{ url_for('service_new', date=today.isoformat()) }}"><span class="qa-icon">ϟ</span><span class="qa-copy"><strong>Novo Serviço</strong><small>Abrir ordem de serviço</small></span></a>
+  <a class="quick-action quick-green" href="{{ url_for('client_new') }}"><span class="qa-icon">♙</span><span class="qa-copy"><strong>Novo Cliente</strong><small>Cadastrar novo cliente</small></span></a>
 </section>
 
 {% if overdue_services or low_stock %}
