@@ -1,36 +1,71 @@
 {% extends 'base.html' %}
 {% block title %}Início · {{ app_settings.business_name }}{% endblock %}
 {% block content %}
-<section class="v5-hero">
-  <div class="v5-hero-copy">
-    <div class="v5-eyebrow">PAINEL DO DIA</div>
-    <h1>{% if now.hour < 12 %}Bom dia{% elif now.hour < 18 %}Boa tarde{% else %}Boa noite{% endif %}, <span>{{ app_settings.owner_name or 'Guilherme' }}!</span> <i>👋</i></h1>
-    <p>{{ now.strftime('%d/%m/%Y') }} · Bora pra mais um dia de serviço!</p>
+<section class="v6-command-hero">
+  <div class="v6-command-copy">
+    <div class="v6-kicker">CENTRAL DE OPERAÇÕES</div>
+    <h1>{% if now.hour < 12 %}Bom dia{% elif now.hour < 18 %}Boa tarde{% else %}Boa noite{% endif %}, <span>{{ app_settings.owner_name or 'Guilherme' }}</span> 👋</h1>
+    <p>{{ now.strftime('%d/%m/%Y') }} · Controle clientes, serviços, orçamentos e recebimentos em um só lugar, com a cara da Guilherme Elétrica e Climatização.</p>
+
+    <div class="v6-chip-row">
+      <div class="v6-chip"><small>Serviços hoje</small><strong>{{ today_services|length }}</strong></div>
+      <div class="v6-chip"><small>Clientes</small><strong>{{ client_count }}</strong></div>
+      <div class="v6-chip"><small>Recebido no mês</small><strong>{{ month_income|money }}</strong></div>
+    </div>
+
+    <div class="v6-hero-cta">
+      <a class="btn primary btn-xl" href="{{ url_for('service_new', date=today.isoformat()) }}">＋ Novo serviço</a>
+      <a class="btn glass btn-xl" href="{{ url_for('agenda', view='day', date=today.isoformat()) }}">▣ Ver agenda</a>
+      <a class="btn blue btn-xl" href="{{ url_for('quote_new') }}">▤ Novo orçamento</a>
+    </div>
   </div>
-  <div class="v5-energy-scene" aria-hidden="true">
-    <div class="v5-ac"><div class="v5-ac-slot"></div><div class="v5-air v5-air-1"></div><div class="v5-air v5-air-2"></div></div>
-    <div class="v5-bolt">ϟ</div>
+
+  <div class="v6-command-side" aria-hidden="true">
+    <div class="v6-side-glow v6-side-glow-yellow"></div>
+    <div class="v6-side-glow v6-side-glow-blue"></div>
+    <div class="v6-side-card">
+      <div class="v6-side-header">
+        <div>
+          <small>VISÃO RÁPIDA</small>
+          <strong>{{ app_settings.business_name }}</strong>
+        </div>
+        <span class="v6-side-badge">AO VIVO</span>
+      </div>
+      <div class="v6-side-grid">
+        <div><small>Orçamentos em aberto</small><strong>{{ open_quote_count }}</strong></div>
+        <div><small>Serviços atrasados</small><strong>{{ overdue_services|length }}</strong></div>
+        <div><small>Estoque baixo</small><strong>{{ low_stock|length }}</strong></div>
+        <div><small>Fluxo do mês</small><strong>{{ month_income|money }}</strong></div>
+      </div>
+      <div class="v6-side-footer">⚡ Energia para executar · ❄️ Organização para crescer</div>
+    </div>
   </div>
 </section>
 
-<section class="dashboard-kpis v5-kpis">
+<section class="dashboard-kpis v6-kpis-grid">
   <a class="dash-kpi kpi-yellow" href="{{ url_for('agenda', view='day', date=today.isoformat()) }}">
     <div class="dash-kpi-top"><div class="dash-kpi-icon">ϟ</div><small>SERVIÇOS HOJE</small></div>
     <strong>{{ today_services|length }}</strong>
     <svg class="mini-chart" viewBox="0 0 110 28" aria-hidden="true"><path d="M0 25 L10 22 L20 23 L30 14 L40 18 L50 7 L60 14 L70 10 L80 18 L90 12 L100 17 L110 8"/></svg>
-    <span>Ver todos →</span>
+    <span>Ver agenda →</span>
   </a>
   <a class="dash-kpi kpi-blue" href="{{ url_for('clients') }}">
     <div class="dash-kpi-top"><div class="dash-kpi-icon">♙</div><small>CLIENTES</small></div>
     <strong>{{ client_count }}</strong>
     <svg class="mini-chart" viewBox="0 0 110 28" aria-hidden="true"><path d="M0 22 L10 18 L20 20 L30 12 L40 16 L50 9 L60 13 L70 6 L80 12 L90 8 L100 10 L110 4"/></svg>
-    <span>Ver todos →</span>
+    <span>Ver clientes →</span>
   </a>
   <a class="dash-kpi kpi-green" href="{{ url_for('finance') }}">
     <div class="dash-kpi-top"><div class="dash-kpi-icon">$</div><small>RECEBIMENTOS (MÊS)</small></div>
     <strong>{{ month_income|money }}</strong>
     <svg class="mini-chart" viewBox="0 0 110 28" aria-hidden="true"><path d="M0 24 L10 20 L20 21 L30 16 L40 18 L50 10 L60 13 L70 7 L80 11 L90 6 L100 8 L110 3"/></svg>
-    <span>Ver detalhes →</span>
+    <span>Entradas pagas →</span>
+  </a>
+  <a class="dash-kpi kpi-coral" href="{{ url_for('finance', type='expense') }}">
+    <div class="dash-kpi-top"><div class="dash-kpi-icon">−</div><small>DESPESAS (MÊS)</small></div>
+    <strong>{{ month_expense|money }}</strong>
+    <svg class="mini-chart" viewBox="0 0 110 28" aria-hidden="true"><path d="M0 8 L10 10 L20 12 L30 12 L40 15 L50 16 L60 18 L70 19 L80 22 L90 22 L100 24 L110 25"/></svg>
+    <span>Saídas pagas →</span>
   </a>
   <a class="dash-kpi kpi-purple" href="{{ url_for('quotes') }}">
     <div class="dash-kpi-top"><div class="dash-kpi-icon">▤</div><small>ORÇAMENTOS</small></div>
@@ -38,10 +73,16 @@
     <svg class="mini-chart" viewBox="0 0 110 28" aria-hidden="true"><path d="M0 24 L10 22 L20 17 L30 19 L40 13 L50 15 L60 10 L70 12 L80 7 L90 10 L100 5 L110 6"/></svg>
     <span>Em aberto →</span>
   </a>
+  <a class="dash-kpi kpi-ice" href="{{ url_for('finance') }}">
+    <div class="dash-kpi-top"><div class="dash-kpi-icon">≈</div><small>SALDO DO MÊS</small></div>
+    <strong>{{ month_balance|money }}</strong>
+    <svg class="mini-chart" viewBox="0 0 110 28" aria-hidden="true"><path d="M0 21 L10 20 L20 19 L30 17 L40 16 L50 12 L60 13 L70 10 L80 9 L90 7 L100 5 L110 4"/></svg>
+    <span>Receitas − despesas →</span>
+  </a>
 </section>
 
-<section class="dashboard-columns v5-panels">
-  <div class="dash-panel v5-recent-panel">
+<section class="dashboard-columns v6-panels">
+  <div class="dash-panel v6-recent-panel">
     <div class="dash-panel-head"><h2><span class="panel-icon">◷</span> Serviços recentes</h2><a href="{{ url_for('services') }}">Ver todos →</a></div>
     <div class="dash-panel-body compact-list">
       {% for s in recent_services %}
@@ -55,7 +96,7 @@
     </div>
   </div>
 
-  <div class="dash-panel v5-schedule-panel">
+  <div class="dash-panel v6-schedule-panel">
     <div class="dash-panel-head"><h2><span class="panel-icon">▣</span> Próximos agendamentos</h2><a href="{{ url_for('agenda') }}">Ver agenda →</a></div>
     <div class="dash-panel-body compact-list">
       {% for s in upcoming[:5] %}
@@ -70,7 +111,7 @@
   </div>
 </section>
 
-<section class="dashboard-actions v5-actions">
+<section class="dashboard-actions v6-actions-grid">
   <a class="quick-action quick-yellow" href="{{ url_for('quote_new') }}"><span class="qa-icon">▤</span><span class="qa-copy"><strong>Novo Orçamento</strong><small>Criar orçamento rápido</small></span></a>
   <a class="quick-action quick-blue" href="{{ url_for('service_new', date=today.isoformat()) }}"><span class="qa-icon">ϟ</span><span class="qa-copy"><strong>Novo Serviço</strong><small>Abrir ordem de serviço</small></span></a>
   <a class="quick-action quick-green" href="{{ url_for('client_new') }}"><span class="qa-icon">♙</span><span class="qa-copy"><strong>Novo Cliente</strong><small>Cadastrar novo cliente</small></span></a>
@@ -78,8 +119,8 @@
 
 {% if overdue_services or low_stock %}
 <section class="dashboard-columns alerts-row">
-<div class="dash-panel"><div class="dash-panel-head"><h2>⚠ Serviços atrasados</h2></div><div class="dash-panel-body compact-list">{% for s in overdue_services %}<a class="recent-row" href="{{ url_for('service_detail', service_id=s.id) }}"><div class="recent-main"><strong>{{ s.client.name }}</strong><span>{{ s.title }} · {{ s.service_date|datebr }}</span></div><span class="badge pending">Resolver</span></a>{% else %}<div class="empty">Nenhum atraso.</div>{% endfor %}</div></div>
-<div class="dash-panel"><div class="dash-panel-head"><h2>▦ Estoque baixo</h2></div><div class="dash-panel-body compact-list">{% for m in low_stock %}<a class="recent-row" href="{{ url_for('materials') }}"><div class="recent-main"><strong>{{ m.name }}</strong><span>{{ m.stock_qty }} {{ m.unit }} em estoque</span></div><span class="badge pending">Repor</span></a>{% else %}<div class="empty">Estoque sem alertas.</div>{% endfor %}</div></div>
+  <div class="dash-panel"><div class="dash-panel-head"><h2>⚠ Serviços atrasados</h2></div><div class="dash-panel-body compact-list">{% for s in overdue_services %}<a class="recent-row" href="{{ url_for('service_detail', service_id=s.id) }}"><div class="recent-main"><strong>{{ s.client.name }}</strong><span>{{ s.title }} · {{ s.service_date|datebr }}</span></div><span class="badge pending">Resolver</span></a>{% else %}<div class="empty">Nenhum atraso.</div>{% endfor %}</div></div>
+  <div class="dash-panel"><div class="dash-panel-head"><h2>▦ Estoque baixo</h2></div><div class="dash-panel-body compact-list">{% for m in low_stock %}<a class="recent-row" href="{{ url_for('materials') }}"><div class="recent-main"><strong>{{ m.name }}</strong><span>{{ m.stock_qty }} {{ m.unit }} em estoque</span></div><span class="badge pending">Repor</span></a>{% else %}<div class="empty">Estoque sem alertas.</div>{% endfor %}</div></div>
 </section>
 {% endif %}
 {% endblock %}

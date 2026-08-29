@@ -1,0 +1,4 @@
+- Adicionados novos cards na tela inicial: **Despesas (mês)** e **Saldo do mês**.
+- Mantidos os cards de Serviços hoje, Clientes, Recebimentos e Orçamentos.
+- Desktop agora mostra 6 KPIs em grade 3x2; no celular segue em 2 colunas.
+- Dashboard usa `month_expense` já existente e novo cálculo `month_balance = month_income - month_expense`.

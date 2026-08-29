@@ -981,6 +981,7 @@ def dashboard():
         FinanceEntry.type == "expense", FinanceEntry.status == "paid",
         FinanceEntry.paid_date >= month_start, FinanceEntry.paid_date < next_month
     ).scalar() or 0
+    month_balance = Decimal(month_income or 0) - Decimal(month_expense or 0)
     receivable = db.session.query(func.coalesce(func.sum(FinanceEntry.amount), 0)).filter(
         FinanceEntry.type == "income", FinanceEntry.status == "pending"
     ).scalar() or 0
@@ -999,6 +1000,7 @@ def dashboard():
         overdue_services=overdue_services,
         month_income=month_income,
         month_expense=month_expense,
+        month_balance=month_balance,
         receivable=receivable,
         pending_count=pending_count,
         low_stock=low_stock,

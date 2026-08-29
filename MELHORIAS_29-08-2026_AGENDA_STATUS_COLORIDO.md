@@ -1,0 +1,4 @@
+- Na visualização **Próximos 7 dias** da Agenda, o status dentro do card agora aparece colorido.
+- **Concluído** fica em verde.
+- **Agendado** fica em vermelho, conforme solicitado.
+- Também foram definidos tons para outros status para melhorar a leitura.

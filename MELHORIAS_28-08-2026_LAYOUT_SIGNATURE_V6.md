@@ -1,0 +1,5 @@
+- Atualizado o layout para uma versão V6 mais premium.
+- Novo dashboard com hero principal, métricas rápidas e CTAs refinados.
+- Ajustes visuais em sidebar, topbar, busca global, cards, ações rápidas e navegação mobile.
+- Melhorias de contraste, profundidade, hierarquia visual e acabamento geral no smartphone e desktop.
+- Cache-busting atualizado para CSS/JS (`v=20260828-v6`).
