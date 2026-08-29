@@ -10,9 +10,9 @@
 <form method="post" class="card quick-service-form">
   <div class="card-body form-grid">
     <div class="field full quick-step">
-      <label><span class="step-dot">1</span> Cliente *</label>
+      <label><span class="step-dot">1</span> Cliente</label>
       <div class="client-picker" data-client-picker>
-        <input class="input" type="search" data-client-search autocomplete="off" placeholder="Digite o nome ou telefone do cliente">
+        <input class="input" type="search" name="quick_client_name" data-client-search autocomplete="off" placeholder="Busque um cliente ou digite um nome novo" value="{{ quick_client_name or '' }}">
         <select class="client-source" name="client_id" data-client-select>
           <option value="">Selecione...</option>
           {% for c in clients %}
@@ -21,7 +21,14 @@
         </select>
         <div class="client-results" data-client-results></div>
       </div>
-      <div class="help">Não encontrou? <a href="{{ url_for('client_new') }}" style="color:#9fd4ff">+ Cadastrar cliente</a></div>
+      {% if not service %}
+      <div class="quick-client-new">
+        <input class="input" name="quick_client_phone" inputmode="tel" autocomplete="tel" placeholder="Telefone do cliente novo (opcional)" value="{{ quick_client_phone or '' }}">
+        <div class="help">Não precisa cadastrar antes. Se o nome digitado não estiver na lista, o sistema cria o cliente automaticamente ao salvar o serviço.</div>
+      </div>
+      {% else %}
+      <div class="help">Para trocar o cliente, pesquise e selecione outro cadastro.</div>
+      {% endif %}
     </div>
 
     <div class="field full quick-step">

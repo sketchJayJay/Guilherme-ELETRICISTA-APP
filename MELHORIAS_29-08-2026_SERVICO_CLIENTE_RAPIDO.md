@@ -1,0 +1,5 @@
+- A criação de serviço pela Agenda não exige mais que o cliente esteja cadastrado previamente.
+- O campo Cliente continua pesquisando clientes existentes.
+- Se o usuário digitar um nome novo e salvar, o sistema cria o cliente automaticamente e agenda o serviço na mesma ação.
+- Telefone do cliente novo é opcional.
+- O sistema tenta reaproveitar clientes existentes por telefone ou nome exato para evitar duplicidade.

@@ -730,3 +730,7 @@ body.v6-luxe{
 .agenda-inline-status.sent{color:#c8afff}
 .agenda-inline-status.cancelled,
 .agenda-inline-status.rejected{color:#ff9a9a}
+
+/* Serviço rápido: cliente novo sem cadastro prévio */
+.quick-client-new{display:grid;gap:8px;margin-top:8px}
+.quick-client-new .help{line-height:1.45;color:#8fa7c8}

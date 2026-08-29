@@ -1145,14 +1145,43 @@ def service_new():
     selected_date = parse_date(request.args.get("date"), date.today())
     if request.method == "POST":
         client_id = request.form.get("client_id", type=int)
+        quick_client_name = request.form.get("quick_client_name", "").strip()
+        quick_client_phone = request.form.get("quick_client_phone", "").strip()
         client = Client.query.get(client_id) if client_id else None
+
+        # O serviço pode ser criado sem cadastrar o cliente antes. Se nenhum
+        # cadastro foi selecionado, reaproveitamos um cliente igual (nome ou
+        # telefone) ou criamos um cadastro rápido automaticamente.
         if not client or client.name == SYSTEM_QUOTE_CLIENT_NAME:
-            flash("Selecione um cliente.", "error")
+            client = None
+            quick_phone_digits = phone_digits(quick_client_phone)
+            if quick_phone_digits:
+                for candidate in clients_list:
+                    if phone_digits(candidate.phone) == quick_phone_digits:
+                        client = candidate
+                        break
+            if not client and quick_client_name:
+                client = Client.query.filter(
+                    Client.name != SYSTEM_QUOTE_CLIENT_NAME,
+                    func.lower(Client.name) == quick_client_name.lower(),
+                ).first()
+            if not client and quick_client_name:
+                client = Client(
+                    name=quick_client_name,
+                    phone=quick_client_phone,
+                    address=request.form.get("address", "").strip(),
+                )
+                db.session.add(client)
+                db.session.flush()
+
+        if not client:
+            flash("Digite o nome do cliente ou selecione um cliente da lista.", "error")
             return render_template(
                 "service_form.html", service=None, clients=clients_list, employees=employees_list,
-                selected_client=client_id, selected_date=selected_date,
+                selected_client=client_id, selected_date=parse_date(request.form.get("service_date"), selected_date),
                 assigned_employee_id=request.form.get("employee_id", type=int),
                 assigned_employee_value=decimal_or_zero(request.form.get("helper_value")),
+                quick_client_name=quick_client_name, quick_client_phone=quick_client_phone,
             )
         all_day = request.form.get("all_day") == "1"
         service = Service(
@@ -1177,9 +1206,10 @@ def service_new():
             flash("Informe o serviço.", "error")
             return render_template(
                 "service_form.html", service=service, clients=clients_list, employees=employees_list,
-                selected_client=client_id, selected_date=selected_date,
+                selected_client=client.id if client else client_id, selected_date=parse_date(request.form.get("service_date"), selected_date),
                 assigned_employee_id=request.form.get("employee_id", type=int),
                 assigned_employee_value=decimal_or_zero(request.form.get("helper_value")),
+                quick_client_name=quick_client_name, quick_client_phone=quick_client_phone,
             )
         sync_service_total(service)
         db.session.add(service)
@@ -1216,6 +1246,7 @@ def service_new():
         "service_form.html", service=None, clients=clients_list, employees=employees_list,
         selected_client=selected_client, selected_date=selected_date,
         assigned_employee_id=None, assigned_employee_value=Decimal("0"),
+        quick_client_name="", quick_client_phone="",
     )
 
 
