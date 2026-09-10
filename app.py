@@ -1111,6 +1111,7 @@ def client_delete(client_id):
 def agenda():
     view = request.args.get("view", "week")
     base = parse_date(request.args.get("date"), local_today())
+    month_cells = []
     if view == "month":
         start = base.replace(day=1)
         end = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
@@ -1128,7 +1129,23 @@ def agenda():
     grouped = {}
     for s in services:
         grouped.setdefault(s.service_date, []).append(s)
-    return render_template("agenda.html", services=services, grouped=grouped, start=start, end=end, base=base, view=view)
+
+    if view == "month":
+        # Grade do calendário começando no domingo, com 6 semanas.
+        start_offset = (start.weekday() + 1) % 7
+        grid_start = start - timedelta(days=start_offset)
+        month_cells = [grid_start + timedelta(days=i) for i in range(42)]
+
+    return render_template(
+        "agenda.html",
+        services=services,
+        grouped=grouped,
+        start=start,
+        end=end,
+        base=base,
+        view=view,
+        month_cells=month_cells,
+    )
 
 
 @app.route("/services")

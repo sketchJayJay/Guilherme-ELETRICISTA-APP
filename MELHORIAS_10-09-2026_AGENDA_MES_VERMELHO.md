@@ -1,0 +1,4 @@
+- A visualização **Agenda > Mês** agora mostra um calendário em grade.
+- Dias que já têm serviço agendado ficam destacados em **vermelho**.
+- Cada dia mostra a quantidade de serviços e uma prévia rápida de até 2 títulos.
+- Toque em um dia para abrir a agenda daquele dia.

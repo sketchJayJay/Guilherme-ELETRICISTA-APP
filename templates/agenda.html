@@ -2,7 +2,33 @@
 <div class="page-head"><div><h1>Agenda</h1><p>Organizada por dia. Horário só entra quando realmente existir.</p></div><a class="btn primary" href="{{ url_for('service_new', date=base.isoformat()) }}">+ Serviço</a></div>
 <div class="toolbar"><div class="actions"><a class="btn sm {% if view=='day' %}primary{% endif %}" href="{{ url_for('agenda', view='day', date=base.isoformat()) }}">Dia</a><a class="btn sm {% if view=='week' %}primary{% endif %}" href="{{ url_for('agenda', view='week', date=base.isoformat()) }}">Próximos 7 dias</a><a class="btn sm {% if view=='month' %}primary{% endif %}" href="{{ url_for('agenda', view='month', date=base.isoformat()) }}">Mês</a></div><form method="get"><input type="hidden" name="view" value="{{ view }}"><input class="input" type="date" name="date" value="{{ base.isoformat() }}"><button class="btn" type="submit">Ir</button></form></div>
 {% if view=='month' %}
-<div class="card"><div class="card-body"><div class="list">{% for d,items in grouped.items() %}<div><h3 style="margin:8px 0">{{ d|datebr }}</h3>{% for s in items %}<div class="service-row"><div><div class="row-title">{% if not s.all_day %}{{ s.service_time|timebr }} · {% endif %}{{ s.title }}</div><div class="row-sub">{{ s.client.name }}</div></div><div><span class="badge {{ s.status }}">{{ status_labels[s.status] }}</span> <a class="btn sm" href="{{ url_for('service_detail', service_id=s.id) }}">Abrir</a></div></div>{% endfor %}</div>{% else %}<div class="empty">Nenhum serviço neste mês.</div>{% endfor %}</div></div></div>
+<div class="card month-legend-card"><div class="card-body month-legend"><strong>Calendário do mês</strong><span class="month-dot-red"></span><span>Dias com serviço agendado aparecem em vermelho.</span></div></div>
+<div class="month-grid-wrap">
+  <div class="month-grid-head">
+    <div>DOM.</div><div>SEG.</div><div>TER.</div><div>QUA.</div><div>QUI.</div><div>SEX.</div><div>SÁB.</div>
+  </div>
+  <div class="month-grid">
+    {% for d in month_cells %}
+      {% set items = grouped.get(d, []) %}
+      <a class="month-cell {% if d.month != start.month %}other-month{% endif %} {% if d==today %}today{% endif %} {% if items %}has-service{% endif %}" href="{{ url_for('agenda', view='day', date=d.isoformat()) }}">
+        <div class="month-cell-top">
+          <span class="month-day-num">{{ d.day }}</span>
+          {% if items %}<span class="month-count">{{ items|length }}</span>{% endif %}
+        </div>
+        {% if items %}
+          <div class="month-preview">
+            {% for s in items[:2] %}
+              <div class="month-preview-item">{{ s.title }}</div>
+            {% endfor %}
+            {% if items|length > 2 %}<div class="month-preview-more">+ {{ items|length - 2 }} serviço(s)</div>{% endif %}
+          </div>
+        {% else %}
+          <div class="month-empty">Livre</div>
+        {% endif %}
+      </a>
+    {% endfor %}
+  </div>
+</div>
 {% elif view=='day' %}
 <div class="card"><div class="card-head"><h2>{{ base|datebr }}</h2></div><div class="card-body"><div class="list">{% for s in services %}<div class="service-row"><div><div class="row-title">{{ s.title }}</div><div class="row-sub">{{ s.client.name }} · {% if s.all_day %}Sem horário definido{% else %}{{ s.service_time|timebr }}{% endif %}</div></div><div><span class="badge {{ s.status }}">{{ status_labels[s.status] }}</span> <a class="btn sm" href="{{ url_for('service_detail', service_id=s.id) }}">Abrir</a></div></div>{% else %}<div class="empty">Dia livre.</div>{% endfor %}</div></div></div>
 {% else %}
