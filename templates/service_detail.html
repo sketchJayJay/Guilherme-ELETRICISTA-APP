@@ -14,6 +14,17 @@
       <div><small>Recebido</small><strong>{{ service.amount_paid|money }}</strong></div>
       <div><small>Lucro estimado</small><strong class="{{ 'profit-positive' if profit>=0 else 'profit-negative' }}">{{ profit|money }}</strong></div>
     </div>
+    <form method="post" action="{{ url_for('service_value_update', service_id=service.id) }}" class="quick-value-inline no-print">
+      <div class="quick-value-copy">
+        <small>VALOR DO SERVIÇO</small>
+        <span>Digite e salve direto aqui, sem precisar entrar em Editar.</span>
+      </div>
+      <div class="quick-value-control">
+        <span class="quick-value-prefix">R$</span>
+        <input class="input" name="service_value" inputmode="decimal" autocomplete="off" value="{{ service.labor_value }}" placeholder="0,00" aria-label="Valor do serviço">
+        <button class="btn primary" type="submit">Salvar valor</button>
+      </div>
+    </form>
   </div>
   <div class="timer-box">
     <div class="muted">Cronômetro de trabalho</div>

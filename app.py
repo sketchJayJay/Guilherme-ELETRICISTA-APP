@@ -1390,6 +1390,31 @@ def service_edit(service_id):
     )
 
 
+@app.route("/services/<int:service_id>/value", methods=["POST"])
+@login_required
+def service_value_update(service_id):
+    service = Service.query.get_or_404(service_id)
+    raw_value = request.form.get("service_value", "").strip()
+    if raw_value == "":
+        flash("Informe o valor do serviço.", "error")
+        return redirect(url_for("service_detail", service_id=service.id))
+
+    value = decimal_or_zero(raw_value)
+    if value < 0:
+        flash("Informe um valor válido.", "error")
+        return redirect(url_for("service_detail", service_id=service.id))
+
+    # Ao definir um valor manual, tratamos o serviço como valor fechado.
+    # Assim o cronômetro não substitui esse valor por R$ 0,00 depois.
+    service.charge_type = "fixed"
+    service.labor_value = value
+    sync_service_total(service)
+    ensure_income_entry(service)
+    db.session.commit()
+    flash(f"Valor do serviço salvo: {money(service.total_value)}", "success")
+    return redirect(url_for("service_detail", service_id=service.id))
+
+
 @app.route("/services/<int:service_id>/assign-helper", methods=["POST"])
 @admin_required
 def service_assign_helper(service_id):

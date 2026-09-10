@@ -1,0 +1,4 @@
+- Adicionado campo **Valor do serviço** diretamente na tela do serviço.
+- O valor é salvo por POST simples, sem depender de JavaScript, para funcionar também no Chrome antigo do Windows 7.
+- Ao salvar manualmente, o serviço passa para cobrança por valor fechado, evitando o cronômetro sobrescrever o valor com R$ 0,00.
+- O total e o lançamento financeiro vinculado são atualizados imediatamente.
