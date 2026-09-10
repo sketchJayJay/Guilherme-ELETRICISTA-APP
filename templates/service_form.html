@@ -28,12 +28,16 @@
         <div class="client-results" data-client-results></div>
       </div>
       {% if not service %}
-      <div class="quick-client-new">
-        <input class="input" name="quick_client_phone" inputmode="tel" autocomplete="tel" placeholder="Telefone do cliente novo (opcional)" value="{{ quick_client_phone or '' }}">
-        <div class="help">Não precisa cadastrar antes. Se o nome digitado não estiver na lista, o sistema cria o cliente automaticamente ao salvar o serviço.</div>
+      <div class="existing-client-hint" id="existingClientHint" {% if not selected_client_obj %}style="display:none"{% endif %}>
+        <span class="existing-client-check">✓</span>
+        <div><strong>Cliente cadastrado</strong><span>Telefone, endereço e demais dados já serão puxados automaticamente. Não precisa digitar de novo.</span></div>
+      </div>
+      <div class="quick-client-new" id="quickClientNewFields" {% if selected_client_obj %}style="display:none"{% endif %}>
+        <input class="input" name="quick_client_phone" id="quickClientPhone" inputmode="tel" autocomplete="tel" placeholder="Telefone (somente se for cliente novo)" value="{{ quick_client_phone or '' }}">
+        <div class="help">Este campo só é usado quando você digitar um cliente que ainda não está cadastrado.</div>
       </div>
       {% else %}
-      <div class="help">Para trocar o cliente, pesquise e selecione outro cadastro.</div>
+      <div class="help">Para trocar o cliente, pesquise e selecione outro cadastro. Os dados do cliente escolhido são puxados automaticamente.</div>
       {% endif %}
     </div>
 
@@ -168,6 +172,20 @@
 function toggleTime(){document.getElementById('timeField').style.display=document.getElementById('allDay').value==='1'?'none':'grid'}
 function toggleCharge(){let h=document.getElementById('chargeType').value==='hourly';document.querySelectorAll('.hourly').forEach(x=>x.style.display=h?'grid':'none');document.querySelectorAll('.fixed').forEach(x=>x.style.display=h?'none':'grid')}
 function toggleHelperValue(){const s=document.getElementById('employeeSelect');const f=document.getElementById('helperValueField');if(f)f.style.display=s&&s.value?'grid':'none'}
-toggleTime();toggleCharge();toggleHelperValue();
+function toggleQuickClientPhone(){
+  var select=document.querySelector('[data-client-select]');
+  var phoneBox=document.getElementById('quickClientNewFields');
+  var hint=document.getElementById('existingClientHint');
+  if(!phoneBox)return;
+  var hasExisting=!!(select&&select.value);
+  phoneBox.style.display=hasExisting?'none':'grid';
+  if(hint)hint.style.display=hasExisting?'flex':'none';
+}
+var quickClientSelect=document.querySelector('[data-client-select]');
+var quickClientSearch=document.querySelector('[data-client-search]');
+if(quickClientSelect)quickClientSelect.addEventListener('change',toggleQuickClientPhone);
+if(quickClientSearch)quickClientSearch.addEventListener('input',function(){setTimeout(toggleQuickClientPhone,0)});
+if(quickClientSearch)quickClientSearch.addEventListener('blur',function(){setTimeout(toggleQuickClientPhone,180)});
+toggleTime();toggleCharge();toggleHelperValue();toggleQuickClientPhone();
 </script>
 {% endblock %}

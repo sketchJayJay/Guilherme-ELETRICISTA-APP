@@ -779,3 +779,9 @@ body.v6-luxe{
 .finance-month-kicker{letter-spacing:.12em}
 .finance-summary-card small{line-height:1.25}
 .finance-summary-card span{line-height:1.35}
+
+/* Serviço rápido: cliente cadastrado não pede telefone novamente */
+.existing-client-hint{display:flex;align-items:center;gap:10px;padding:11px 13px;border:1px solid rgba(56,217,150,.22);background:rgba(56,217,150,.07);border-radius:13px;color:#dff9ed}
+.existing-client-hint .existing-client-check{width:27px;height:27px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;background:rgba(56,217,150,.16);color:#6ce8af;font-weight:950}
+.existing-client-hint strong{display:block;font-size:13px}
+.existing-client-hint span:not(.existing-client-check){display:block;margin-top:2px;color:#9fc5b5;font-size:12px;line-height:1.35}

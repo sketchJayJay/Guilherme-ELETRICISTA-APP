@@ -1,0 +1,4 @@
+- Ao selecionar um cliente já cadastrado no Novo Serviço, o campo de telefone do cliente novo é ocultado.
+- O sistema informa que telefone, endereço e demais dados do cadastro existente são puxados automaticamente.
+- O campo de telefone aparece apenas quando nenhum cliente cadastrado está selecionado e será criado um cliente novo.
+- A lógica do servidor já reaproveita cliente existente por ID, telefone ou nome exato, então o telefone não precisa ser redigitado.
