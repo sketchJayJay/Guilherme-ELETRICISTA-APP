@@ -973,13 +973,14 @@ def dashboard():
     upcoming = Service.query.filter(Service.service_date > today, Service.status.in_(["scheduled", "in_progress"])).order_by(Service.service_date, Service.service_time).limit(8).all()
     overdue_services = Service.query.filter(Service.service_date < today, Service.status.in_(["scheduled", "in_progress"])).order_by(Service.service_date).limit(8).all()
 
+    paid_reference_date = func.coalesce(FinanceEntry.paid_date, FinanceEntry.due_date)
     month_income = db.session.query(func.coalesce(func.sum(FinanceEntry.amount), 0)).filter(
         FinanceEntry.type == "income", FinanceEntry.status == "paid",
-        FinanceEntry.paid_date >= month_start, FinanceEntry.paid_date < next_month
+        paid_reference_date >= month_start, paid_reference_date < next_month
     ).scalar() or 0
     month_expense = db.session.query(func.coalesce(func.sum(FinanceEntry.amount), 0)).filter(
         FinanceEntry.type == "expense", FinanceEntry.status == "paid",
-        FinanceEntry.paid_date >= month_start, FinanceEntry.paid_date < next_month
+        paid_reference_date >= month_start, paid_reference_date < next_month
     ).scalar() or 0
     month_balance = Decimal(month_income or 0) - Decimal(month_expense or 0)
     receivable = db.session.query(func.coalesce(func.sum(FinanceEntry.amount), 0)).filter(
@@ -2252,8 +2253,11 @@ def quote_pdf(quote_id):
 def finance():
     type_filter = request.args.get("type", "")
     status_filter = request.args.get("status", "")
-    start = parse_date(request.args.get("start"), date.today().replace(day=1))
-    end = parse_date(request.args.get("end"), date.today())
+    today = date.today()
+    default_start = today.replace(day=1)
+    default_end = ((default_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1))
+    start = parse_date(request.args.get("start"), default_start)
+    end = parse_date(request.args.get("end"), default_end)
     query = FinanceEntry.query.filter(FinanceEntry.due_date >= start, FinanceEntry.due_date <= end)
     if type_filter:
         query = query.filter_by(type=type_filter)
@@ -2271,16 +2275,22 @@ def finance():
 @login_required
 def finance_new():
     clients_list = Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all()
+    preset_type = request.args.get("type", "expense") if request.method == "GET" else request.form.get("type", "expense")
+    preset_status = request.args.get("status", "paid") if request.method == "GET" else request.form.get("status", "paid")
+    if preset_type not in ("income", "expense"):
+        preset_type = "expense"
+    if preset_status not in ("paid", "pending"):
+        preset_status = "paid"
     if request.method == "POST":
         entry = FinanceEntry(
-            type=request.form.get("type", "expense"),
+            type=preset_type,
             client_id=request.form.get("client_id", type=int),
             description=request.form.get("description", "").strip(),
             category=request.form.get("category", "").strip(),
             amount=decimal_or_zero(request.form.get("amount")),
             due_date=parse_date(request.form.get("due_date"), date.today()),
             paid_date=parse_date(request.form.get("paid_date")),
-            status=request.form.get("status", "pending"),
+            status=preset_status,
             payment_method=request.form.get("payment_method", "").strip(),
             notes=request.form.get("notes", "").strip(),
         )
@@ -2293,7 +2303,7 @@ def finance_new():
         db.session.commit()
         flash("Lançamento financeiro criado.", "success")
         return redirect(url_for("finance"))
-    return render_template("finance_form.html", entry=None, clients=clients_list)
+    return render_template("finance_form.html", entry=None, clients=clients_list, preset_type=preset_type, preset_status=preset_status)
 
 
 @app.route("/finance/<int:entry_id>/edit", methods=["GET", "POST"])

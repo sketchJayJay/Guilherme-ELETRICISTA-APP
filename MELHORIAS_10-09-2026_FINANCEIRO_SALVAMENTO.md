@@ -1,0 +1,6 @@
+- Corrigido o comportamento que fazia o usuário salvar um gasto/recebimento e não enxergar o valor nos cards do dashboard.
+- Novos lançamentos manuais de **Recebimento** e **Gasto** passam a abrir como **já pago / já recebido** por padrão.
+- Quando um lançamento está pago e não tem `paid_date`, o sistema preenche automaticamente a data atual.
+- O dashboard passa a considerar `paid_date` e, para registros antigos sem essa data, usa `due_date` como fallback.
+- Financeiro agora abre por padrão o mês inteiro, não somente do dia 1 até hoje.
+- Adicionados botões rápidos: `+ Recebimento`, `+ Gasto` e `+ A receber`.
