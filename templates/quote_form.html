@@ -12,8 +12,14 @@
 
 <div class="field full" id="registeredCustomerBox">
   <label>Buscar cliente</label>
+  {% if selected_client_obj %}
+  <div class="preselected-client">
+    <span class="preselected-client-icon">✓</span>
+    <div><small>Cliente já selecionado</small><strong>{{ selected_client_obj.name }}</strong>{% if selected_client_obj.phone %}<span>{{ selected_client_obj.phone }}</span>{% endif %}</div>
+  </div>
+  {% endif %}
   <div class="client-picker" data-client-picker>
-    <input class="input" type="search" data-client-search autocomplete="off" placeholder="Digite nome ou telefone">
+    <input class="input" type="search" data-client-search autocomplete="off" placeholder="Digite nome ou telefone" value="{{ selected_client_obj.name if selected_client_obj else '' }}">
     <select class="client-source" name="client_id" data-client-select>
       <option value="">Selecione...</option>
       {% for c in clients %}<option value="{{ c.id }}" data-name="{{ c.name }}" data-phone="{{ c.phone or '' }}" {% if selected_client==c.id %}selected{% endif %}>{{ c.name }}{% if c.phone %} · {{ c.phone }}{% endif %}</option>{% endfor %}

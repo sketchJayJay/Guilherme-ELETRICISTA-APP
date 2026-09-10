@@ -11,8 +11,14 @@
   <div class="card-body form-grid">
     <div class="field full quick-step">
       <label><span class="step-dot">1</span> Cliente</label>
+      {% if selected_client_obj and not service %}
+      <div class="preselected-client">
+        <span class="preselected-client-icon">✓</span>
+        <div><small>Cliente já selecionado</small><strong>{{ selected_client_obj.name }}</strong>{% if selected_client_obj.phone %}<span>{{ selected_client_obj.phone }}</span>{% endif %}</div>
+      </div>
+      {% endif %}
       <div class="client-picker" data-client-picker>
-        <input class="input" type="search" name="quick_client_name" data-client-search autocomplete="off" placeholder="Busque um cliente ou digite um nome novo" value="{{ quick_client_name or '' }}">
+        <input class="input" type="search" name="quick_client_name" data-client-search autocomplete="off" placeholder="Busque um cliente ou digite um nome novo" value="{{ quick_client_name or (selected_client_obj.name if selected_client_obj else '') }}">
         <select class="client-source" name="client_id" data-client-select>
           <option value="">Selecione...</option>
           {% for c in clients %}

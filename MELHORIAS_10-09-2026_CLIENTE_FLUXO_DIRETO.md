@@ -1,0 +1,4 @@
+- Após cadastrar um cliente, a tela dele destaca imediatamente **Novo serviço** e **Novo orçamento**.
+- Ao abrir Novo serviço pelo cliente, o cliente já fica selecionado e visível na tela, inclusive sem depender de JavaScript moderno.
+- Ao abrir Novo orçamento pelo cliente, o cliente também já fica selecionado e visível.
+- O fluxo foi reforçado para navegadores antigos, útil no notebook Windows 7 mostrado pelo cliente.

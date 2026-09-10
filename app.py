@@ -1045,8 +1045,8 @@ def client_new():
             return render_template("client_form.html", client=client)
         db.session.add(client)
         db.session.commit()
-        flash("Cliente cadastrado.", "success")
-        return redirect(url_for("client_detail", client_id=client.id))
+        flash("Cliente cadastrado. Agora você pode criar um serviço ou orçamento para ele.", "success")
+        return redirect(url_for("client_detail", client_id=client.id, created=1))
     return render_template("client_form.html", client=None)
 
 
@@ -1143,6 +1143,10 @@ def service_new():
     clients_list = Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all()
     employees_list = Employee.query.filter_by(active=True).order_by(Employee.name).all()
     selected_client = request.args.get("client_id", type=int)
+    selected_client_obj = db.session.get(Client, selected_client) if selected_client else None
+    if selected_client_obj and selected_client_obj.name == SYSTEM_QUOTE_CLIENT_NAME:
+        selected_client_obj = None
+        selected_client = None
     selected_date = parse_date(request.args.get("date"), date.today())
     if request.method == "POST":
         client_id = request.form.get("client_id", type=int)
@@ -1245,9 +1249,10 @@ def service_new():
         return redirect(url_for("service_detail", service_id=service.id))
     return render_template(
         "service_form.html", service=None, clients=clients_list, employees=employees_list,
-        selected_client=selected_client, selected_date=selected_date,
+        selected_client=selected_client, selected_client_obj=selected_client_obj, selected_date=selected_date,
         assigned_employee_id=None, assigned_employee_value=Decimal("0"),
-        quick_client_name="", quick_client_phone="",
+        quick_client_name=(selected_client_obj.name if selected_client_obj else ""),
+        quick_client_phone=(selected_client_obj.phone if selected_client_obj else ""),
     )
 
 
@@ -1868,6 +1873,10 @@ def quote_customer_from_form(existing_quote=None):
 def quote_new():
     clients_list = Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all()
     selected_client = request.args.get("client_id", type=int)
+    selected_client_obj = db.session.get(Client, selected_client) if selected_client else None
+    if selected_client_obj and selected_client_obj.name == SYSTEM_QUOTE_CLIENT_NAME:
+        selected_client_obj = None
+        selected_client = None
     if request.method == "POST":
         client_id, customer_data = quote_customer_from_form()
         if not client_id:
@@ -1920,7 +1929,7 @@ def quote_new():
         return redirect(url_for("quote_detail", quote_id=quote.id))
     return render_template(
         "quote_form.html", quote=None, clients=clients_list,
-        selected_client=selected_client,
+        selected_client=selected_client, selected_client_obj=selected_client_obj,
         customer_mode="registered" if selected_client else "guest",
     )
 
