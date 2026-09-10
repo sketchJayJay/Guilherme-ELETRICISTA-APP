@@ -2416,6 +2416,10 @@ def parse_month_value(value):
 
 def get_finance_month_summary(month_value=None):
     month_start, next_month, month_value, month_label = parse_month_value(month_value)
+    today = local_today()
+    month_end = next_month - timedelta(days=1)
+    is_current_month = month_start.year == today.year and month_start.month == today.month
+    is_future_month = month_start > today.replace(day=1)
 
     paid_entries = FinanceEntry.query.filter(
         FinanceEntry.status == "paid",
@@ -2457,6 +2461,10 @@ def get_finance_month_summary(month_value=None):
         "next_month": next_month,
         "month_value": month_value,
         "month_label": month_label,
+        "month_end": month_end,
+        "today": today,
+        "is_current_month": is_current_month,
+        "is_future_month": is_future_month,
         "received": received,
         "expenses": expenses,
         "balance": balance,

@@ -1,0 +1,4 @@
+- No mês atual, o título **Fechamento do mês** foi alterado para **Resumo parcial do mês**.
+- Os cards agora mostram **Recebido até hoje**, **Gastos até hoje**, **Saldo parcial** e **A receber previsto**.
+- O sistema exibe claramente a data até a qual os valores pagos foram contabilizados e o último dia do mês para as pendências.
+- Meses passados continuam usando **Fechamento do mês** e meses futuros usam **Previsão do mês**.

@@ -11,9 +11,15 @@
 <section class="finance-month-hero">
   <div class="finance-month-head">
     <div>
-      <div class="finance-month-kicker">FECHAMENTO DO MÊS</div>
+      <div class="finance-month-kicker">{% if summary.is_current_month %}RESUMO PARCIAL DO MÊS{% elif summary.is_future_month %}PREVISÃO DO MÊS{% else %}FECHAMENTO DO MÊS{% endif %}</div>
       <h2>{{ summary.month_label }}</h2>
-      <p>O que realmente entrou, o que saiu e quanto sobrou.</p>
+      {% if summary.is_current_month %}
+      <p>Valores movimentados até {{ summary.today|datebr }} e pendências previstas até {{ summary.month_end|datebr }}.</p>
+      {% elif summary.is_future_month %}
+      <p>Previsão dos lançamentos já cadastrados para este mês.</p>
+      {% else %}
+      <p>Fechamento consolidado do período selecionado.</p>
+      {% endif %}
     </div>
     <form method="get" class="finance-month-picker">
       <input type="hidden" name="start" value="{{ start.isoformat() }}">
@@ -27,10 +33,10 @@
   </div>
 
   <div class="finance-summary-grid">
-    <div class="finance-summary-card received"><small>Recebido</small><strong>{{ summary.received|money }}</strong><span>Entradas confirmadas</span></div>
-    <div class="finance-summary-card expense"><small>Gastos</small><strong>{{ summary.expenses|money }}</strong><span>Despesas pagas</span></div>
-    <div class="finance-summary-card balance"><small>Saldo do mês</small><strong>{{ summary.balance|money }}</strong><span>Recebido menos gastos</span></div>
-    <div class="finance-summary-card pending"><small>A receber</small><strong>{{ summary.receivable|money }}</strong><span>Pendências do mês</span></div>
+    <div class="finance-summary-card received"><small>{% if summary.is_current_month %}Recebido até hoje{% else %}Recebido{% endif %}</small><strong>{{ summary.received|money }}</strong><span>Entradas confirmadas{% if summary.is_current_month %} até {{ summary.today|datebr }}{% endif %}</span></div>
+    <div class="finance-summary-card expense"><small>{% if summary.is_current_month %}Gastos até hoje{% else %}Gastos{% endif %}</small><strong>{{ summary.expenses|money }}</strong><span>Despesas pagas{% if summary.is_current_month %} até {{ summary.today|datebr }}{% endif %}</span></div>
+    <div class="finance-summary-card balance"><small>{% if summary.is_current_month %}Saldo parcial{% else %}Saldo do mês{% endif %}</small><strong>{{ summary.balance|money }}</strong><span>Recebido menos gastos</span></div>
+    <div class="finance-summary-card pending"><small>{% if summary.is_current_month %}A receber previsto{% else %}A receber{% endif %}</small><strong>{{ summary.receivable|money }}</strong><span>Pendências até {{ summary.month_end|datebr }}</span></div>
   </div>
 
   <div class="finance-breakdown-grid">
