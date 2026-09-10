@@ -1,0 +1,7 @@
+- Criado fechamento financeiro mensal com seletor de mês.
+- Mostra: recebido, gastos, saldo e valores a receber.
+- Adicionado resumo de gastos por categoria e entradas por categoria.
+- Adicionado botão **Resumo PDF** para gerar o fechamento do mês.
+- PDF inclui totais, categorias, movimentações e valores a receber.
+- Campo Categoria ganhou sugestões como Serviço, Material, Combustível, Ajudante, Ferramentas e Outros.
+- Registros antigos marcados como pagos sem `paid_date` entram no mês usando a data do lançamento como fallback.

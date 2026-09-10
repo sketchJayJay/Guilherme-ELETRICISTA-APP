@@ -1,6 +1,90 @@
 {% extends 'base.html' %}{% block content %}
-<div class="page-head"><div><h1>Financeiro</h1><p>Registre o que entrou, o que saiu e veja o fechamento do mês.</p></div><div class="actions"><a class="btn success" href="{{ url_for('finance_new', type='income', status='paid') }}">+ Recebimento</a><a class="btn danger" href="{{ url_for('finance_new', type='expense', status='paid') }}">+ Gasto</a><a class="btn" href="{{ url_for('finance_new', type='income', status='pending') }}">+ A receber</a></div></div>
-<div class="grid stats"><div class="stat"><div class="label">Recebido</div><div class="value">{{ paid_income|money }}</div></div><div class="stat"><div class="label">A receber</div><div class="value">{{ pending_income|money }}</div></div><div class="stat"><div class="label">Gastos pagos</div><div class="value">{{ paid_expense|money }}</div></div><div class="stat"><div class="label">Saldo do período</div><div class="value">{{ (paid_income-paid_expense)|money }}</div></div></div>
-<div class="toolbar"><form method="get"><input class="input" type="date" name="start" value="{{ start.isoformat() }}"><input class="input" type="date" name="end" value="{{ end.isoformat() }}"><select class="select" name="type"><option value="">Entradas e gastos</option><option value="income" {% if type_filter=='income' %}selected{% endif %}>Entradas</option><option value="expense" {% if type_filter=='expense' %}selected{% endif %}>Gastos</option></select><select class="select" name="status"><option value="">Todos</option><option value="paid" {% if status_filter=='paid' %}selected{% endif %}>Pago / recebido</option><option value="pending" {% if status_filter=='pending' %}selected{% endif %}>Pendente</option></select><button class="btn" type="submit">Ver período</button></form></div>
-<div class="card"><div class="card-head"><h2>Lançamentos</h2><span class="muted">{{ start|datebr }} até {{ end|datebr }}</span></div><div class="table-wrap"><table class="table"><thead><tr><th>Data</th><th>Descrição</th><th>Cliente</th><th>Tipo</th><th>Status</th><th>Valor</th><th>Ações</th></tr></thead><tbody>{% for e in entries %}<tr><td>{{ e.due_date|datebr }}{% if e.paid_date %}<div class="muted">Movimentado {{ e.paid_date|datebr }}</div>{% endif %}</td><td>{{ e.description }}{% if e.category %}<div class="muted">{{ e.category }}</div>{% endif %}</td><td>{{ e.client.name if e.client else '—' }}</td><td><span class="badge {{ 'completed' if e.type=='income' else 'rejected' }}">{{ 'Entrada' if e.type=='income' else 'Gasto' }}</span></td><td><span class="badge {{ e.status }}">{{ 'Pago / recebido' if e.status=='paid' else 'Pendente' }}</span></td><td class="money">{{ e.amount|money }}</td><td><div class="actions"><form method="post" action="{{ url_for('finance_toggle', entry_id=e.id) }}"><button class="btn sm {{ 'danger' if e.status=='paid' else 'success' }}" type="submit">{{ 'Voltar pendente' if e.status=='paid' else 'Dar baixa' }}</button></form><a class="btn sm" href="{{ url_for('finance_edit', entry_id=e.id) }}">Editar</a>{% if not e.service_id %}<form method="post" action="{{ url_for('finance_delete', entry_id=e.id) }}" onsubmit="return confirmDelete('Excluir este lançamento? Se ele vier da equipe, o sistema vai direcionar você para o ajudante.')"><button class="btn sm danger" type="submit">Excluir</button></form>{% endif %}</div></td></tr>{% else %}<tr><td colspan="7"><div class="empty">Nenhum lançamento neste período.</div></td></tr>{% endfor %}</tbody></table></div></div>
+<div class="page-head">
+  <div><h1>Financeiro</h1><p>Registre o que entrou, o que saiu e acompanhe o fechamento do mês.</p></div>
+  <div class="actions">
+    <a class="btn success" href="{{ url_for('finance_new', type='income', status='paid') }}">+ Recebimento</a>
+    <a class="btn danger" href="{{ url_for('finance_new', type='expense', status='paid') }}">+ Gasto</a>
+    <a class="btn" href="{{ url_for('finance_new', type='income', status='pending') }}">+ A receber</a>
+  </div>
+</div>
+
+<section class="finance-month-hero">
+  <div class="finance-month-head">
+    <div>
+      <div class="finance-month-kicker">FECHAMENTO DO MÊS</div>
+      <h2>{{ summary.month_label }}</h2>
+      <p>O que realmente entrou, o que saiu e quanto sobrou.</p>
+    </div>
+    <form method="get" class="finance-month-picker">
+      <input type="hidden" name="start" value="{{ start.isoformat() }}">
+      <input type="hidden" name="end" value="{{ end.isoformat() }}">
+      <input type="hidden" name="type" value="{{ type_filter }}">
+      <input type="hidden" name="status" value="{{ status_filter }}">
+      <input class="input" type="month" name="month" value="{{ summary.month_value }}">
+      <button class="btn" type="submit">Ver mês</button>
+      <a class="btn blue" href="{{ url_for('finance_monthly_pdf', month=summary.month_value) }}">📄 Resumo PDF</a>
+    </form>
+  </div>
+
+  <div class="finance-summary-grid">
+    <div class="finance-summary-card received"><small>Recebido</small><strong>{{ summary.received|money }}</strong><span>Entradas confirmadas</span></div>
+    <div class="finance-summary-card expense"><small>Gastos</small><strong>{{ summary.expenses|money }}</strong><span>Despesas pagas</span></div>
+    <div class="finance-summary-card balance"><small>Saldo do mês</small><strong>{{ summary.balance|money }}</strong><span>Recebido menos gastos</span></div>
+    <div class="finance-summary-card pending"><small>A receber</small><strong>{{ summary.receivable|money }}</strong><span>Pendências do mês</span></div>
+  </div>
+
+  <div class="finance-breakdown-grid">
+    <div class="finance-breakdown-card">
+      <div class="finance-breakdown-title"><strong>Onde mais gastou</strong><span>{{ summary.expense_categories|length }} categoria(s)</span></div>
+      <div class="finance-category-list">
+        {% for category, amount in summary.expense_categories[:6] %}
+        <div class="finance-category-row"><span>{{ category }}</span><strong>{{ amount|money }}</strong></div>
+        {% else %}<div class="empty">Nenhum gasto lançado neste mês.</div>{% endfor %}
+      </div>
+    </div>
+    <div class="finance-breakdown-card">
+      <div class="finance-breakdown-title"><strong>Entradas por categoria</strong><span>{{ summary.income_categories|length }} categoria(s)</span></div>
+      <div class="finance-category-list">
+        {% for category, amount in summary.income_categories[:6] %}
+        <div class="finance-category-row"><span>{{ category }}</span><strong>{{ amount|money }}</strong></div>
+        {% else %}<div class="empty">Nenhuma entrada lançada neste mês.</div>{% endfor %}
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="grid stats finance-period-stats">
+  <div class="stat"><div class="label">Recebido no período</div><div class="value">{{ paid_income|money }}</div></div>
+  <div class="stat"><div class="label">A receber no período</div><div class="value">{{ pending_income|money }}</div></div>
+  <div class="stat"><div class="label">Gastos pagos no período</div><div class="value">{{ paid_expense|money }}</div></div>
+  <div class="stat"><div class="label">Saldo do período</div><div class="value">{{ (paid_income-paid_expense)|money }}</div></div>
+</div>
+
+<div class="toolbar finance-filter-bar">
+  <form method="get">
+    <input type="hidden" name="month" value="{{ summary.month_value }}">
+    <input class="input" type="date" name="start" value="{{ start.isoformat() }}">
+    <input class="input" type="date" name="end" value="{{ end.isoformat() }}">
+    <select class="select" name="type"><option value="">Entradas e gastos</option><option value="income" {% if type_filter=='income' %}selected{% endif %}>Entradas</option><option value="expense" {% if type_filter=='expense' %}selected{% endif %}>Gastos</option></select>
+    <select class="select" name="status"><option value="">Todos</option><option value="paid" {% if status_filter=='paid' %}selected{% endif %}>Pago / recebido</option><option value="pending" {% if status_filter=='pending' %}selected{% endif %}>Pendente</option></select>
+    <button class="btn" type="submit">Ver período</button>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Lançamentos</h2><span class="muted">{{ start|datebr }} até {{ end|datebr }}</span></div>
+  <div class="table-wrap"><table class="table"><thead><tr><th>Data</th><th>Descrição</th><th>Cliente</th><th>Tipo</th><th>Status</th><th>Valor</th><th>Ações</th></tr></thead><tbody>
+    {% for e in entries %}
+    <tr>
+      <td>{{ e.due_date|datebr }}{% if e.paid_date %}<div class="muted">Movimentado {{ e.paid_date|datebr }}</div>{% endif %}</td>
+      <td>{{ e.description }}{% if e.category %}<div class="muted">{{ e.category }}</div>{% endif %}</td>
+      <td>{{ e.client.name if e.client else '—' }}</td>
+      <td><span class="badge {{ 'completed' if e.type=='income' else 'rejected' }}">{{ 'Entrada' if e.type=='income' else 'Gasto' }}</span></td>
+      <td><span class="badge {{ e.status }}">{{ 'Pago / recebido' if e.status=='paid' else 'Pendente' }}</span></td>
+      <td class="money">{{ e.amount|money }}</td>
+      <td><div class="actions"><form method="post" action="{{ url_for('finance_toggle', entry_id=e.id) }}"><button class="btn sm {{ 'danger' if e.status=='paid' else 'success' }}" type="submit">{{ 'Voltar pendente' if e.status=='paid' else 'Dar baixa' }}</button></form><a class="btn sm" href="{{ url_for('finance_edit', entry_id=e.id) }}">Editar</a>{% if not e.service_id %}<form method="post" action="{{ url_for('finance_delete', entry_id=e.id) }}" onsubmit="return confirmDelete('Excluir este lançamento? Se ele vier da equipe, o sistema vai direcionar você para o ajudante.')"><button class="btn sm danger" type="submit">Excluir</button></form>{% endif %}</div></td>
+    </tr>
+    {% else %}<tr><td colspan="7"><div class="empty">Nenhum lançamento neste período.</div></td></tr>{% endfor %}
+  </tbody></table></div>
+</div>
 {% endblock %}

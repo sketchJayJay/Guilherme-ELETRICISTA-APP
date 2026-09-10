@@ -2247,6 +2247,230 @@ def quote_pdf(quote_id):
     return send_file(pdf, mimetype="application/pdf", as_attachment=True, download_name=filename, max_age=0)
 
 
+
+MONTH_NAMES_PT = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+]
+
+
+def parse_month_value(value):
+    """Retorna (month_start, next_month, YYYY-MM, label) com fallback para o mês atual."""
+    today = local_today()
+    try:
+        year, month = (value or "").split("-", 1)
+        year = int(year)
+        month = int(month)
+        if month < 1 or month > 12:
+            raise ValueError
+        month_start = date(year, month, 1)
+    except (ValueError, TypeError, AttributeError):
+        month_start = today.replace(day=1)
+    next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    month_value = month_start.strftime("%Y-%m")
+    month_label = f"{MONTH_NAMES_PT[month_start.month - 1]}/{month_start.year}"
+    return month_start, next_month, month_value, month_label
+
+
+def get_finance_month_summary(month_value=None):
+    month_start, next_month, month_value, month_label = parse_month_value(month_value)
+
+    paid_entries = FinanceEntry.query.filter(
+        FinanceEntry.status == "paid",
+        or_(
+            (FinanceEntry.paid_date >= month_start) & (FinanceEntry.paid_date < next_month),
+            (FinanceEntry.paid_date.is_(None)) & (FinanceEntry.due_date >= month_start) & (FinanceEntry.due_date < next_month),
+        ),
+    ).order_by(FinanceEntry.paid_date.asc().nullsfirst(), FinanceEntry.due_date.asc(), FinanceEntry.id.asc()).all()
+
+    pending_entries = FinanceEntry.query.filter(
+        FinanceEntry.type == "income",
+        FinanceEntry.status == "pending",
+        FinanceEntry.due_date >= month_start,
+        FinanceEntry.due_date < next_month,
+    ).order_by(FinanceEntry.due_date.asc(), FinanceEntry.id.asc()).all()
+
+    income_entries = [x for x in paid_entries if x.type == "income"]
+    expense_entries = [x for x in paid_entries if x.type == "expense"]
+
+    received = sum((Decimal(x.amount or 0) for x in income_entries), Decimal("0"))
+    expenses = sum((Decimal(x.amount or 0) for x in expense_entries), Decimal("0"))
+    receivable = sum((Decimal(x.amount or 0) for x in pending_entries), Decimal("0"))
+    balance = received - expenses
+
+    expense_categories = {}
+    for entry in expense_entries:
+        category = (entry.category or "Outros").strip() or "Outros"
+        expense_categories[category] = expense_categories.get(category, Decimal("0")) + Decimal(entry.amount or 0)
+    expense_categories = sorted(expense_categories.items(), key=lambda item: item[1], reverse=True)
+
+    income_categories = {}
+    for entry in income_entries:
+        category = (entry.category or "Serviços / Outros").strip() or "Serviços / Outros"
+        income_categories[category] = income_categories.get(category, Decimal("0")) + Decimal(entry.amount or 0)
+    income_categories = sorted(income_categories.items(), key=lambda item: item[1], reverse=True)
+
+    return {
+        "month_start": month_start,
+        "next_month": next_month,
+        "month_value": month_value,
+        "month_label": month_label,
+        "received": received,
+        "expenses": expenses,
+        "balance": balance,
+        "receivable": receivable,
+        "income_entries": income_entries,
+        "expense_entries": expense_entries,
+        "pending_entries": pending_entries,
+        "expense_categories": expense_categories,
+        "income_categories": income_categories,
+    }
+
+
+def build_finance_month_pdf(summary):
+    settings = get_settings()
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=14 * mm,
+        leftMargin=14 * mm,
+        topMargin=14 * mm,
+        bottomMargin=14 * mm,
+        title=f"Resumo financeiro - {summary['month_label']}",
+        author=settings.business_name or "Guilherme Elétrica e Climatização",
+    )
+
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="FinTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=18, leading=22, textColor=colors.HexColor("#0F172A")))
+    styles.add(ParagraphStyle(name="FinSection", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=11, leading=14, spaceBefore=5, spaceAfter=6, textColor=colors.HexColor("#0F172A")))
+    styles.add(ParagraphStyle(name="FinBody", parent=styles["BodyText"], fontSize=9.5, leading=13, textColor=colors.HexColor("#1F2937")))
+    styles.add(ParagraphStyle(name="FinSmall", parent=styles["BodyText"], fontSize=8.5, leading=11, textColor=colors.HexColor("#64748B")))
+    styles.add(ParagraphStyle(name="FinRight", parent=styles["BodyText"], fontSize=9, leading=12, alignment=TA_RIGHT, textColor=colors.HexColor("#475569")))
+
+    story = []
+    logo_path = os.path.join(BASE_DIR, "static", "brand-logo-doc.png")
+    if not os.path.exists(logo_path):
+        logo_path = os.path.join(BASE_DIR, "static", "brand-logo.png")
+    left = []
+    if os.path.exists(logo_path):
+        left.append(RLImage(logo_path, width=68 * mm, height=22 * mm))
+    else:
+        left.append(Paragraph(xml_escape(settings.business_name or "Guilherme Elétrica e Climatização"), styles["FinTitle"]))
+    meta_bits = [x for x in [settings.phone, settings.city] if x]
+    if meta_bits:
+        left.append(Paragraph(xml_escape(" · ".join(meta_bits)), styles["FinSmall"]))
+    right = Paragraph(f"<b>RESUMO FINANCEIRO</b><br/>{xml_escape(summary['month_label'])}", styles["FinRight"])
+    header = Table([[left, right]], colWidths=[118 * mm, 62 * mm])
+    header.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LINEBELOW", (0, 0), (-1, -1), 1.5, colors.HexColor("#0F172A")),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.extend([header, Spacer(1, 6 * mm)])
+
+    metrics = [
+        ["Recebido", "Gastos", "Saldo", "A receber"],
+        [money(summary["received"]), money(summary["expenses"]), money(summary["balance"]), money(summary["receivable"])],
+    ]
+    metrics_table = Table(metrics, colWidths=[45 * mm] * 4)
+    metrics_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8.5),
+        ("FONTSIZE", (0, 1), (-1, 1), 12),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("GRID", (0, 0), (-1, -1), .5, colors.HexColor("#CBD5E1")),
+        ("BACKGROUND", (0, 1), (0, 1), colors.HexColor("#ECFDF5")),
+        ("BACKGROUND", (1, 1), (1, 1), colors.HexColor("#FFF1F2")),
+        ("BACKGROUND", (2, 1), (2, 1), colors.HexColor("#EFF6FF")),
+        ("BACKGROUND", (3, 1), (3, 1), colors.HexColor("#FFFBEB")),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    story.extend([metrics_table, Spacer(1, 6 * mm)])
+
+    story.append(Paragraph("Gastos por categoria", styles["FinSection"]))
+    cat_data = [["Categoria", "Valor", "% dos gastos"]]
+    if summary["expense_categories"]:
+        for category, amount in summary["expense_categories"]:
+            pct = (Decimal(amount) / Decimal(summary["expenses"]) * Decimal("100")) if summary["expenses"] else Decimal("0")
+            cat_data.append([Paragraph(xml_escape(category), styles["FinBody"]), money(amount), f"{pct.quantize(Decimal('0.1'))}%"])
+    else:
+        cat_data.append(["Nenhum gasto lançado", "R$ 0,00", "0%"])
+    cat_table = Table(cat_data, colWidths=[100 * mm, 45 * mm, 35 * mm], repeatRows=1)
+    cat_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("GRID", (0, 0), (-1, -1), .4, colors.HexColor("#CBD5E1")),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.extend([cat_table, Spacer(1, 6 * mm)])
+
+    story.append(Paragraph("Movimentações do mês", styles["FinSection"]))
+    movement_data = [["Data", "Descrição", "Tipo", "Categoria", "Valor"]]
+    movements = sorted(
+        summary["income_entries"] + summary["expense_entries"],
+        key=lambda x: ((x.paid_date or x.due_date), x.id),
+    )
+    for entry in movements:
+        movement_data.append([
+            (entry.paid_date or entry.due_date).strftime("%d/%m/%Y"),
+            Paragraph(xml_escape(entry.description or "Lançamento"), styles["FinBody"]),
+            "Entrada" if entry.type == "income" else "Gasto",
+            Paragraph(xml_escape((entry.category or "Outros").strip() or "Outros"), styles["FinBody"]),
+            money(entry.amount),
+        ])
+    if len(movement_data) == 1:
+        movement_data.append(["-", "Nenhuma movimentação paga/recebida", "-", "-", "R$ 0,00"])
+    movement_table = Table(movement_data, colWidths=[25 * mm, 72 * mm, 25 * mm, 34 * mm, 24 * mm], repeatRows=1)
+    movement_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8.3),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (-1, 0), (-1, -1), "RIGHT"),
+        ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#CBD5E1")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.extend([movement_table, Spacer(1, 5 * mm)])
+
+    if summary["pending_entries"]:
+        story.append(Paragraph("Valores a receber", styles["FinSection"]))
+        pending_data = [["Vencimento", "Descrição", "Cliente", "Valor"]]
+        for entry in summary["pending_entries"]:
+            pending_data.append([
+                entry.due_date.strftime("%d/%m/%Y"),
+                Paragraph(xml_escape(entry.description or "A receber"), styles["FinBody"]),
+                Paragraph(xml_escape(entry.client.name if entry.client else "-"), styles["FinBody"]),
+                money(entry.amount),
+            ])
+        pending_table = Table(pending_data, colWidths=[30 * mm, 78 * mm, 47 * mm, 25 * mm], repeatRows=1)
+        pending_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FEF3C7")),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ALIGN", (-1, 0), (-1, -1), "RIGHT"),
+            ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#D6D3D1")),
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        story.append(pending_table)
+
+    if settings.footer_text:
+        story.extend([Spacer(1, 8 * mm), Paragraph(xml_escape(str(settings.footer_text)), styles["FinSmall"])])
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
 # -------------------- Finance --------------------
 @app.route("/finance")
 @login_required
@@ -2268,7 +2492,29 @@ def finance():
     paid_income = sum((Decimal(x.amount or 0) for x in entries if x.type == "income" and x.status == "paid"), Decimal("0"))
     pending_income = sum((Decimal(x.amount or 0) for x in entries if x.type == "income" and x.status == "pending"), Decimal("0"))
     paid_expense = sum((Decimal(x.amount or 0) for x in entries if x.type == "expense" and x.status == "paid"), Decimal("0"))
-    return render_template("finance.html", entries=entries, type_filter=type_filter, status_filter=status_filter, start=start, end=end, paid_income=paid_income, pending_income=pending_income, paid_expense=paid_expense)
+    summary = get_finance_month_summary(request.args.get("month"))
+    return render_template(
+        "finance.html",
+        entries=entries,
+        type_filter=type_filter,
+        status_filter=status_filter,
+        start=start,
+        end=end,
+        paid_income=paid_income,
+        pending_income=pending_income,
+        paid_expense=paid_expense,
+        summary=summary,
+    )
+
+
+
+@app.route("/finance/monthly/pdf")
+@login_required
+def finance_monthly_pdf():
+    summary = get_finance_month_summary(request.args.get("month"))
+    pdf = build_finance_month_pdf(summary)
+    filename = f"resumo-financeiro-{summary['month_value']}.pdf"
+    return send_file(pdf, mimetype="application/pdf", as_attachment=True, download_name=filename, max_age=0)
 
 
 @app.route("/finance/new", methods=["GET", "POST"])
