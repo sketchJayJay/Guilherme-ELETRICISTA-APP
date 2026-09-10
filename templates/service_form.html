@@ -47,6 +47,12 @@
       <input class="input input-lg" type="date" name="service_date" required value="{{ (service.service_date if service else selected_date).isoformat() }}">
     </div>
 
+    <div class="field full quick-step quick-value-step">
+      <label><span class="step-dot">4</span> Valor do serviço <span class="optional-tag">opcional</span></label>
+      <div class="money-input-wrap"><span>R$</span><input class="input input-lg" name="service_value" inputmode="decimal" placeholder="0,00" value="{{ service.labor_value if service else '' }}"></div>
+      <div class="help">Pode salvar o valor aqui direto. Materiais, desconto e forma de pagamento continuam em Mais opções.</div>
+    </div>
+
     <div class="field full quick-save-row">
       <button class="btn primary btn-lg" type="submit">⚡ Salvar serviço</button>
     </div>
@@ -113,8 +119,9 @@
             <input class="input" name="hourly_rate" inputmode="decimal" value="{{ service.hourly_rate if service else app_settings.hourly_rate }}">
           </div>
           <div class="field fixed">
-            <label>Mão de obra</label>
+            <label>Mão de obra / ajuste avançado</label>
             <input class="input" name="labor_value" inputmode="decimal" value="{{ service.labor_value if service else '0' }}">
+            <div class="help">Se o campo “Valor do serviço” acima estiver preenchido, ele terá prioridade.</div>
           </div>
           <div class="field">
             <label>Materiais cobrados</label>

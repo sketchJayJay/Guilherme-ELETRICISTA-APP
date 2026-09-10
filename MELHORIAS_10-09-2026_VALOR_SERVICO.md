@@ -1,0 +1,4 @@
+- Adicionado campo **Valor do serviço** visível no cadastro/edição, sem precisar abrir “Mais opções”.
+- O valor rápido tem prioridade sobre o campo avançado de mão de obra.
+- Corrigido o modo “Por hora”: antes de existir tempo cronometrado, o sistema não zera mais um valor manual informado.
+- Ao salvar/editar, a confirmação agora exibe o total calculado do serviço.

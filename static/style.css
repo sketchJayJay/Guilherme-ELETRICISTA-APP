@@ -760,3 +760,11 @@ body.v6-luxe{
 .preselected-client{display:flex;align-items:center;gap:11px;margin-bottom:9px;padding:11px 13px;border-radius:14px;background:rgba(56,217,150,.07);border:1px solid rgba(56,217,150,.2)}.preselected-client-icon{width:32px;height:32px;display:grid;place-items:center;border-radius:10px;background:rgba(56,217,150,.14);color:#6ee8b4;font-weight:950}.preselected-client div{min-width:0;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}.preselected-client small{width:100%;color:#7eddb5;font-size:9px;text-transform:uppercase;letter-spacing:.08em;font-weight:900}.preselected-client strong{font-size:14px}.preselected-client span{font-size:11px;color:var(--muted)}
 @media(max-width:760px){.client-next-actions{grid-template-columns:1fr;padding:15px;border-radius:19px}.client-next-buttons{grid-template-columns:1fr 1fr}.client-action-card{min-height:72px;padding:12px}.client-action-icon{width:40px;height:40px;border-radius:13px}.client-action-card strong{font-size:14px}.client-action-card small{font-size:10px}}
 @media(max-width:430px){.client-next-buttons{grid-template-columns:1fr}.client-action-card{min-height:66px}}
+
+/* Serviço: valor rápido e visível */
+.quick-value-step{padding:14px;border-radius:16px;background:linear-gradient(135deg,rgba(255,216,77,.07),rgba(46,151,255,.05));border:1px solid rgba(255,216,77,.16)}
+.quick-value-step .optional-tag{font-size:10px;font-weight:800;text-transform:none;letter-spacing:0;color:#8fa8ca;background:rgba(255,255,255,.04);padding:4px 7px;border-radius:999px}
+.money-input-wrap{display:grid;grid-template-columns:auto 1fr;align-items:center;border:1px solid var(--line);border-radius:13px;background:#0c1525;overflow:hidden}
+.money-input-wrap>span{padding:0 0 0 14px;font-weight:900;color:#ffd84d;font-size:17px}
+.money-input-wrap .input{border:0!important;background:transparent!important;box-shadow:none!important}
+@media(max-width:760px){.quick-value-step{padding:12px}.money-input-wrap>span{font-size:16px}}

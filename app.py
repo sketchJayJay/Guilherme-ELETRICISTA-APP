@@ -861,8 +861,16 @@ def sync_service_total(service):
     material_total = sum((sm.subtotal for sm in service.service_materials), Decimal("0"))
     if material_total > 0:
         service.material_value = material_total
+    # Em cobrança por hora, só substitui o valor manual quando já existe tempo
+    # cronometrado. Isso evita o valor digitado voltar para R$ 0,00 antes de
+    # iniciar o cronômetro.
     if service.charge_type == "hourly" and service.hourly_rate:
-        service.labor_value = service.hourly_calculated_value()
+        try:
+            tracked_seconds = service.elapsed_seconds()
+        except Exception:
+            tracked_seconds = 0
+        if tracked_seconds > 0:
+            service.labor_value = service.hourly_calculated_value()
     service.total_value = max(
         Decimal("0"),
         Decimal(service.labor_value or 0) + Decimal(service.material_value or 0) - Decimal(service.discount or 0),
@@ -1201,7 +1209,7 @@ def service_new():
             status=request.form.get("status", "scheduled"),
             charge_type=request.form.get("charge_type", "fixed"),
             hourly_rate=decimal_or_zero(request.form.get("hourly_rate")),
-            labor_value=decimal_or_zero(request.form.get("labor_value")),
+            labor_value=decimal_or_zero(request.form.get("service_value") or request.form.get("labor_value")),
             material_value=decimal_or_zero(request.form.get("material_value")),
             discount=decimal_or_zero(request.form.get("discount")),
             amount_paid=decimal_or_zero(request.form.get("amount_paid")),
@@ -1246,7 +1254,7 @@ def service_new():
             )
             db.session.commit()
 
-        flash("Serviço agendado.", "success")
+        flash(f"Serviço salvo. Total: {money(service.total_value)}", "success")
         return redirect(url_for("service_detail", service_id=service.id))
     return render_template(
         "service_form.html", service=None, clients=clients_list, employees=employees_list,
@@ -1323,7 +1331,7 @@ def service_edit(service_id):
         service.status = request.form.get("status", service.status)
         service.charge_type = request.form.get("charge_type", service.charge_type)
         service.hourly_rate = decimal_or_zero(request.form.get("hourly_rate"))
-        service.labor_value = decimal_or_zero(request.form.get("labor_value"))
+        service.labor_value = decimal_or_zero(request.form.get("service_value") or request.form.get("labor_value"))
         service.material_value = decimal_or_zero(request.form.get("material_value"))
         service.discount = decimal_or_zero(request.form.get("discount"))
         service.amount_paid = decimal_or_zero(request.form.get("amount_paid"))
@@ -1371,7 +1379,7 @@ def service_edit(service_id):
                 )
                 db.session.commit()
 
-        flash("Serviço atualizado.", "success")
+        flash(f"Serviço atualizado. Total: {money(service.total_value)}", "success")
         return redirect(url_for("service_detail", service_id=service.id))
 
     return render_template(
