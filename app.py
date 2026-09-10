@@ -46,6 +46,7 @@ UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "heic"}
 SYSTEM_QUOTE_CLIENT_NAME = "[SISTEMA] ORÇAMENTO AVULSO"
+GOOGLE_REVIEW_URL = "https://share.google/SRKAhj9WQKWmdtuWK"
 VAPID_PRIVATE_PATH = os.path.join(DATA_DIR, "vapid_private.pem")
 VAPID_PUBLIC_PATH = os.path.join(DATA_DIR, "vapid_public.txt")
 APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "America/Sao_Paulo"))
@@ -1278,7 +1279,8 @@ def service_detail(service_id):
         "service_detail.html", service=service, materials=materials, employees=employees, elapsed=elapsed,
         assignments=assignments, helper_expenses=helper_expenses, helper_cost=helper_cost,
         material_cost=material_cost, linked_expenses=linked_expenses, total_cost=total_cost, profit=profit,
-        other_expenses=other_expenses, before_photos=before_photos, after_photos=after_photos
+        other_expenses=other_expenses, before_photos=before_photos, after_photos=after_photos,
+        google_review_url=GOOGLE_REVIEW_URL
     )
 
 
@@ -1748,6 +1750,104 @@ def service_cost_delete(service_id, entry_id):
 def service_print(service_id):
     service = Service.query.get_or_404(service_id)
     return render_template("service_print.html", service=service)
+
+
+def build_service_pdf(service):
+    """Gera a OS/nota do serviço em PDF para compartilhamento no WhatsApp."""
+    settings = get_settings()
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=15 * mm,
+        leftMargin=15 * mm,
+        topMargin=15 * mm,
+        bottomMargin=15 * mm,
+        title=f"OS #{service.id} - {service.client.name if service.client else 'Cliente'}",
+        author=settings.business_name or "Guilherme Elétrica e Climatização",
+    )
+
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="ServiceTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=18, leading=22, spaceAfter=5, textColor=colors.HexColor("#111827")))
+    styles.add(ParagraphStyle(name="ServiceSmall", parent=styles["BodyText"], fontSize=9.5, leading=13, textColor=colors.HexColor("#4B5563")))
+    styles.add(ParagraphStyle(name="ServiceRight", parent=styles["BodyText"], fontSize=9.5, leading=13, alignment=TA_RIGHT, textColor=colors.HexColor("#4B5563")))
+    styles.add(ParagraphStyle(name="ServiceSection", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=11, leading=14, spaceBefore=4, spaceAfter=5, textColor=colors.HexColor("#111827")))
+    styles.add(ParagraphStyle(name="ServiceBody", parent=styles["BodyText"], fontSize=10, leading=14, textColor=colors.HexColor("#111827")))
+
+    story = []
+    business_meta = []
+    if settings.phone:
+        business_meta.append(str(settings.phone))
+    if settings.city:
+        business_meta.append(str(settings.city))
+    logo_path = os.path.join(BASE_DIR, "static", "brand-logo-doc.png")
+    if not os.path.exists(logo_path):
+        logo_path = os.path.join(BASE_DIR, "static", "brand-logo.png")
+    if os.path.exists(logo_path):
+        logo = RLImage(logo_path, width=72 * mm, height=22 * mm)
+        left = [logo, Paragraph(xml_escape(" · ".join(business_meta)), styles["ServiceSmall"]) if business_meta else Paragraph("", styles["ServiceSmall"])]
+    else:
+        left = [Paragraph(xml_escape(str(settings.business_name or "Guilherme Elétrica e Climatização")), styles["ServiceTitle"])]
+
+    service_date = service.service_date.strftime("%d/%m/%Y") if service.service_date else ""
+    status_text = {"scheduled":"Agendado","in_progress":"Em andamento","completed":"Concluído","cancelled":"Cancelado"}.get(service.status, service.status or "")
+    right = Paragraph(f"<b>ORDEM DE SERVIÇO #{service.id}</b><br/>{service_date}<br/>{xml_escape(status_text)}", styles["ServiceRight"])
+    header = Table([[left, right]], colWidths=[115 * mm, 65 * mm])
+    header.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP"),("LINEBELOW",(0,0),(-1,-1),1.6,colors.HexColor("#111827")),("BOTTOMPADDING",(0,0),(-1,-1),8)]))
+    story.extend([header, Spacer(1, 7 * mm)])
+
+    client = service.client
+    client_lines = [f"<b>{xml_escape(str(client.name if client else 'Cliente'))}</b>"]
+    if client and client.phone:
+        client_lines.append(xml_escape(str(client.phone)))
+    address = (service.address or (client.address if client else "") or "").strip()
+    if address:
+        client_lines.append(xml_escape(address))
+    client_box = Table([[Paragraph("<b>Cliente</b><br/>" + "<br/>".join(client_lines), styles["ServiceBody"])]], colWidths=[180 * mm])
+    client_box.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.7,colors.HexColor("#D1D5DB")),("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#F9FAFB")),("LEFTPADDING",(0,0),(-1,-1),10),("RIGHTPADDING",(0,0),(-1,-1),10),("TOPPADDING",(0,0),(-1,-1),9),("BOTTOMPADDING",(0,0),(-1,-1),9)]))
+    story.extend([client_box, Spacer(1, 5 * mm)])
+
+    story.append(Paragraph(xml_escape(str(service.title or "Serviço")), styles["ServiceSection"]))
+    if service.description:
+        story.extend([Paragraph(xml_escape(str(service.description)).replace("\n", "<br/>"), styles["ServiceBody"]), Spacer(1, 4 * mm)])
+
+    if service.service_materials:
+        data = [["Material", "Qtd.", "Unitário", "Subtotal"]]
+        for item in service.service_materials:
+            data.append([Paragraph(xml_escape(str(item.description or "Material")), styles["ServiceBody"]), f"{item.qty} {item.unit}", money(item.unit_price), money(item.subtotal)])
+        tbl = Table(data, colWidths=[91 * mm,24 * mm,31 * mm,34 * mm], repeatRows=1)
+        tbl.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#111827")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9),("VALIGN",(0,0),(-1,-1),"TOP"),("ALIGN",(1,1),(-1,-1),"RIGHT"),("ALIGN",(1,0),(-1,0),"RIGHT"),("GRID",(0,0),(-1,-1),0.45,colors.HexColor("#D1D5DB")),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#F9FAFB")]),("TOPPADDING",(0,0),(-1,-1),7),("BOTTOMPADDING",(0,0),(-1,-1),7)]))
+        story.extend([tbl, Spacer(1, 5 * mm)])
+
+    totals = [
+        ["Mão de obra", money(service.labor_value)],
+        ["Materiais", money(service.material_value)],
+        ["Desconto", f"- {money(service.discount)}"],
+        [Paragraph("<b>TOTAL</b>", styles["ServiceBody"]), Paragraph(f"<b>{money(service.total_value)}</b>", styles["ServiceRight"])],
+        ["Recebido", money(service.amount_paid)],
+    ]
+    total_table = Table(totals, colWidths=[55 * mm, 40 * mm], hAlign="RIGHT")
+    total_table.setStyle(TableStyle([("ALIGN",(1,0),(1,-1),"RIGHT"),("FONTNAME",(0,3),(-1,3),"Helvetica-Bold"),("LINEABOVE",(0,3),(-1,3),1,colors.HexColor("#111827")),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5)]))
+    story.append(total_table)
+
+    if service.notes:
+        story.extend([Spacer(1, 6 * mm), Paragraph("Observações", styles["ServiceSection"]), Paragraph(xml_escape(str(service.notes)).replace("\n", "<br/>"), styles["ServiceBody"])])
+    if settings.footer_text:
+        story.extend([Spacer(1, 10 * mm), Paragraph(xml_escape(str(settings.footer_text)), styles["ServiceSmall"])])
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+
+@app.route("/services/<int:service_id>/pdf")
+@login_required
+def service_pdf(service_id):
+    service = Service.query.get_or_404(service_id)
+    pdf = build_service_pdf(service)
+    customer = secure_filename(service.client.name if service.client else "cliente") or "cliente"
+    filename = f"ordem-servico-{service.id}-{customer}.pdf"
+    return send_file(pdf, mimetype="application/pdf", as_attachment=True, download_name=filename, max_age=0)
 
 
 # API timer used by live clock

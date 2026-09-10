@@ -38,7 +38,13 @@
   {% set map_address = service.address or service.client.address %}
   {% if map_address %}<a class="btn maps-btn" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query={{ map_address|urlencode }}">📍 Abrir no Maps</a>{% endif %}
   <a class="btn" target="_blank" href="{{ url_for('service_print', service_id=service.id) }}">🖨 OS / imprimir</a>
-  {% if service.client.phone %}<a class="btn success" target="_blank" href="https://wa.me/{{ service.client.phone|wa }}?text={{ ('Olá, '+service.client.name+'! Sobre o serviço '+service.title+' do dia '+(service.service_date|datebr)+'.')|urlencode }}">WhatsApp</a>{% endif %}
+  <button class="btn success" type="button" id="shareServicePdf"
+    data-pdf-url="{{ url_for('service_pdf', service_id=service.id) }}"
+    data-filename="ordem-servico-{{ service.id }}.pdf"
+    data-title="OS #{{ service.id }} - {{ service.client.name|e }}"
+    data-phone="{{ service.client.phone|wa if service.client.phone else '' }}"
+    data-message="Olá, {{ service.client.name|e }}! Segue a nota/ordem de serviço referente a {{ service.title|e }}. Obrigado pela confiança no nosso trabalho! ⭐ Se puder, deixe sua avaliação da Guilherme Elétrica e Climatização no Google: {{ google_review_url }}">📄 Enviar nota + avaliação</button>
+  {% if service.client.phone %}<a class="btn" target="_blank" href="https://wa.me/{{ service.client.phone|wa }}?text={{ ('Olá, '+service.client.name+'! Sobre o serviço '+service.title+' do dia '+(service.service_date|datebr)+'.')|urlencode }}">💬 WhatsApp</a>{% endif %}
   {% if service.payment_status != 'paid' and service.total_value > 0 %}<form method="post" action="{{ url_for('service_mark_paid', service_id=service.id) }}" onsubmit="return confirm('Marcar este serviço inteiro como pago?')"><button class="btn success" type="submit">✓ Dar como pago</button></form>{% endif %}
   <form method="post" action="{{ url_for('service_delete', service_id=service.id) }}" onsubmit="return confirmDelete('Excluir definitivamente este serviço?')"><button class="btn danger" type="submit">🗑 Excluir</button></form>
 </div>
@@ -264,6 +270,52 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+(function(){
+  const button = document.getElementById('shareServicePdf');
+  if (!button) return;
+  button.addEventListener('click', async function(){
+    const original = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '⏳ Preparando nota...';
+    try {
+      const response = await fetch(button.dataset.pdfUrl, {credentials:'same-origin', cache:'no-store'});
+      if (!response.ok) throw new Error('Falha ao gerar PDF');
+      const blob = await response.blob();
+      const file = new File([blob], button.dataset.filename || 'ordem-servico.pdf', {type:'application/pdf'});
+      const shareData = {
+        title: button.dataset.title || 'Ordem de serviço',
+        text: button.dataset.message || '',
+        files: [file]
+      };
+      if (navigator.share && (!navigator.canShare || navigator.canShare({files:[file]}))) {
+        await navigator.share(shareData);
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = button.dataset.filename || 'ordem-servico.pdf';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(()=>URL.revokeObjectURL(url), 1500);
+        const phone = button.dataset.phone || '';
+        if (phone) {
+          window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(button.dataset.message || ''), '_blank');
+        } else {
+          alert('A nota foi baixada. Compartilhe no WhatsApp; a mensagem de avaliação já está pronta no botão quando houver telefone cadastrado.');
+        }
+      }
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+      const phone = button.dataset.phone || '';
+      if (phone) window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(button.dataset.message || ''), '_blank');
+      else alert('Não foi possível compartilhar a nota agora.');
+    } finally {
+      button.disabled = false;
+      button.innerHTML = original;
+    }
+  });
+})();
+</script>
 <script>
 const running={{ 'true' if service.timer_running else 'false' }};let seconds={{ elapsed }};const rate={{ service.hourly_rate or 0 }};
 function tick(){if(!running)return;seconds++;document.getElementById('timerDisplay').textContent=formatDuration(seconds);const hv=document.getElementById('hourlyValue');if(hv)hv.textContent=moneyBR((seconds/3600)*rate)}if(running)setInterval(tick,1000);

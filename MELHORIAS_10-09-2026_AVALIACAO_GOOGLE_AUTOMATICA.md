@@ -1,0 +1,5 @@
+- Link de avaliação configurado: https://share.google/SRKAhj9WQKWmdtuWK
+- Tela do serviço ganhou o botão `📄 Enviar nota + avaliação`.
+- Ao compartilhar a nota/OS, o texto enviado junto já pede automaticamente a avaliação no Google e inclui o link.
+- Foi adicionada uma rota de PDF direto para a OS/nota (`/services/<id>/pdf`) para compartilhamento pelo celular.
+- Em navegadores sem compartilhamento de arquivos, o PDF é baixado e o WhatsApp é aberto com a mensagem de avaliação pronta quando houver telefone cadastrado.
