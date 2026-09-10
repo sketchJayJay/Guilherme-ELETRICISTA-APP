@@ -48,7 +48,15 @@
 
     <div class="field full quick-step">
       <label><span class="step-dot">3</span> Dia do serviço *</label>
-      <input class="input input-lg" type="date" name="service_date" required value="{{ (service.service_date if service else selected_date).isoformat() }}">
+      <div class="service-date-picker" id="serviceDatePicker">
+        <input class="input input-lg service-date-native" type="date" name="service_date" id="serviceDateInput" required value="{{ (service.service_date if service else selected_date).isoformat() }}">
+        <button class="service-date-trigger" type="button" id="serviceDateTrigger">
+          <span class="service-date-trigger-icon">📅</span>
+          <span><small>Dia escolhido</small><strong id="serviceDateLabel">{{ (service.service_date if service else selected_date)|datebr }}</strong></span>
+          <span class="service-date-chevron">›</span>
+        </button>
+        <div class="service-date-hint" id="serviceDateHint">Dias em vermelho já possuem serviço agendado.</div>
+      </div>
     </div>
 
     <div class="field full quick-step quick-value-step">
@@ -166,6 +174,31 @@
     </div>
   </div>
 </form>
+
+<div class="service-calendar-backdrop" id="serviceCalendarBackdrop" aria-hidden="true">
+  <div class="service-calendar-modal" role="dialog" aria-modal="true" aria-labelledby="serviceCalendarTitle">
+    <div class="service-calendar-head">
+      <div>
+        <small>ESCOLHER DIA DO SERVIÇO</small>
+        <h2 id="serviceCalendarTitle">Veja a agenda antes de marcar</h2>
+      </div>
+      <button type="button" class="service-calendar-close" id="serviceCalendarClose" aria-label="Fechar">×</button>
+    </div>
+    <div class="service-calendar-nav">
+      <button type="button" id="serviceCalendarPrev" aria-label="Mês anterior">‹</button>
+      <strong id="serviceCalendarMonth"></strong>
+      <button type="button" id="serviceCalendarNext" aria-label="Próximo mês">›</button>
+    </div>
+    <div class="service-calendar-weekdays"><span>DOM</span><span>SEG</span><span>TER</span><span>QUA</span><span>QUI</span><span>SEX</span><span>SÁB</span></div>
+    <div class="service-calendar-grid" id="serviceCalendarGrid"></div>
+    <div class="service-calendar-legend">
+      <span><i class="legend-busy"></i> Já tem serviço</span>
+      <span><i class="legend-free"></i> Livre</span>
+    </div>
+    <div class="service-calendar-warning" id="serviceCalendarWarning" style="display:none"></div>
+    <button type="button" class="btn danger service-calendar-confirm-busy" id="serviceCalendarConfirmBusy" style="display:none">Agendar mesmo assim</button>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
@@ -186,6 +219,94 @@ var quickClientSearch=document.querySelector('[data-client-search]');
 if(quickClientSelect)quickClientSelect.addEventListener('change',toggleQuickClientPhone);
 if(quickClientSearch)quickClientSearch.addEventListener('input',function(){setTimeout(toggleQuickClientPhone,0)});
 if(quickClientSearch)quickClientSearch.addEventListener('blur',function(){setTimeout(toggleQuickClientPhone,180)});
+
+(function(){
+  var picker=document.getElementById('serviceDatePicker');
+  var input=document.getElementById('serviceDateInput');
+  var trigger=document.getElementById('serviceDateTrigger');
+  var label=document.getElementById('serviceDateLabel');
+  var hint=document.getElementById('serviceDateHint');
+  var backdrop=document.getElementById('serviceCalendarBackdrop');
+  var closeBtn=document.getElementById('serviceCalendarClose');
+  var prevBtn=document.getElementById('serviceCalendarPrev');
+  var nextBtn=document.getElementById('serviceCalendarNext');
+  var monthLabel=document.getElementById('serviceCalendarMonth');
+  var grid=document.getElementById('serviceCalendarGrid');
+  var warning=document.getElementById('serviceCalendarWarning');
+  var confirmBusy=document.getElementById('serviceCalendarConfirmBusy');
+  if(!picker||!input||!trigger||!backdrop||!grid)return;
+
+  var busy={{ (busy_dates or {})|tojson }};
+  var monthNames=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  var initial=input.value ? input.value.split('-') : null;
+  var now=new Date();
+  var viewYear=initial ? parseInt(initial[0],10) : now.getFullYear();
+  var viewMonth=initial ? parseInt(initial[1],10)-1 : now.getMonth();
+  var pendingBusyDate='';
+
+  picker.classList.add('enhanced');
+
+  function pad(n){return String(n).padStart(2,'0')}
+  function isoDate(y,m,d){return y+'-'+pad(m+1)+'-'+pad(d)}
+  function pretty(iso){var p=iso.split('-');return p[2]+'/'+p[1]+'/'+p[0]}
+  function updateSelectedUi(){
+    if(!input.value)return;
+    if(label)label.textContent=pretty(input.value);
+    var count=busy[input.value]||0;
+    if(hint){
+      if(count){hint.className='service-date-hint busy';hint.textContent='⚠ Já '+(count===1?'existe 1 serviço':'existem '+count+' serviços')+' nesse dia.';}
+      else{hint.className='service-date-hint free';hint.textContent='✓ Dia livre na agenda.';}
+    }
+  }
+  function closeCalendar(){backdrop.classList.remove('open');backdrop.setAttribute('aria-hidden','true');pendingBusyDate='';warning.style.display='none';confirmBusy.style.display='none'}
+  function openCalendar(){
+    var p=input.value?input.value.split('-'):null;
+    if(p){viewYear=parseInt(p[0],10);viewMonth=parseInt(p[1],10)-1;}
+    renderCalendar();backdrop.classList.add('open');backdrop.setAttribute('aria-hidden','false');
+  }
+  function selectFree(iso){input.value=iso;updateSelectedUi();closeCalendar();input.dispatchEvent(new Event('change',{bubbles:true}))}
+  function askBusy(iso,count){
+    pendingBusyDate=iso;
+    warning.style.display='block';
+    warning.innerHTML='<strong>⚠ Dia já ocupado</strong><span>Já '+(count===1?'existe 1 serviço':'existem '+count+' serviços')+' em '+pretty(iso)+'. Escolha outro dia para evitar choque de agenda.</span>';
+    confirmBusy.style.display='inline-flex';
+  }
+  function renderCalendar(){
+    monthLabel.textContent=monthNames[viewMonth]+' de '+viewYear;
+    grid.innerHTML='';
+    var first=new Date(viewYear,viewMonth,1);
+    var daysInMonth=new Date(viewYear,viewMonth+1,0).getDate();
+    var blanks=first.getDay();
+    for(var b=0;b<blanks;b++){
+      var empty=document.createElement('span');empty.className='service-calendar-day empty-day';grid.appendChild(empty);
+    }
+    for(var day=1;day<=daysInMonth;day++){
+      (function(dayNum){
+        var iso=isoDate(viewYear,viewMonth,dayNum);
+        var count=busy[iso]||0;
+        var btn=document.createElement('button');
+        btn.type='button';
+        btn.className='service-calendar-day'+(count?' busy':'')+(input.value===iso?' selected':'');
+        var todayIso=isoDate(now.getFullYear(),now.getMonth(),now.getDate());
+        if(todayIso===iso)btn.className+=' today';
+        btn.innerHTML='<span>'+dayNum+'</span>'+(count?'<small>'+count+'</small>':'');
+        btn.setAttribute('aria-label',pretty(iso)+(count?' - '+count+' serviço(s) agendado(s)':' - livre'));
+        btn.onclick=function(){if(count){askBusy(iso,count)}else{selectFree(iso)}};
+        grid.appendChild(btn);
+      })(day);
+    }
+  }
+
+  trigger.addEventListener('click',openCalendar);
+  closeBtn.addEventListener('click',closeCalendar);
+  backdrop.addEventListener('click',function(e){if(e.target===backdrop)closeCalendar()});
+  prevBtn.addEventListener('click',function(){viewMonth--;if(viewMonth<0){viewMonth=11;viewYear--}renderCalendar()});
+  nextBtn.addEventListener('click',function(){viewMonth++;if(viewMonth>11){viewMonth=0;viewYear++}renderCalendar()});
+  confirmBusy.addEventListener('click',function(){if(pendingBusyDate)selectFree(pendingBusyDate)});
+  input.addEventListener('change',updateSelectedUi);
+  updateSelectedUi();
+})();
+
 toggleTime();toggleCharge();toggleHelperValue();toggleQuickClientPhone();
 </script>
 {% endblock %}

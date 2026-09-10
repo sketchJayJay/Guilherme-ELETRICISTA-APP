@@ -1,0 +1,6 @@
+- O campo **Dia do serviço** agora abre um calendário próprio dentro do sistema.
+- Dias que já possuem serviço ficam destacados em **vermelho antes de salvar**.
+- O número de serviços daquele dia aparece em um pequeno contador.
+- Ao tocar em um dia ocupado, o sistema avisa e recomenda escolher outro dia.
+- Ainda existe a opção **Agendar mesmo assim**, caso o Guilherme realmente queira dois serviços no mesmo dia.
+- Na edição de um serviço, o próprio serviço é desconsiderado para não marcar seu dia como conflito consigo mesmo.

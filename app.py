@@ -970,6 +970,17 @@ def logout():
     return redirect(url_for("login"))
 
 
+def get_busy_service_dates(exclude_service_id=None):
+    """Retorna {YYYY-MM-DD: quantidade} para destacar dias já ocupados ao agendar."""
+    query = db.session.query(Service.service_date, func.count(Service.id)).filter(
+        Service.status != "cancelled"
+    )
+    if exclude_service_id:
+        query = query.filter(Service.id != exclude_service_id)
+    rows = query.group_by(Service.service_date).all()
+    return {service_date.isoformat(): int(count or 0) for service_date, count in rows if service_date}
+
+
 # -------------------- Dashboard --------------------
 @app.route("/")
 @login_required
@@ -1168,6 +1179,7 @@ def services():
 def service_new():
     clients_list = Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all()
     employees_list = Employee.query.filter_by(active=True).order_by(Employee.name).all()
+    busy_dates = get_busy_service_dates()
     selected_client = request.args.get("client_id", type=int)
     selected_client_obj = db.session.get(Client, selected_client) if selected_client else None
     if selected_client_obj and selected_client_obj.name == SYSTEM_QUOTE_CLIENT_NAME:
@@ -1213,6 +1225,7 @@ def service_new():
                 assigned_employee_id=request.form.get("employee_id", type=int),
                 assigned_employee_value=decimal_or_zero(request.form.get("helper_value")),
                 quick_client_name=quick_client_name, quick_client_phone=quick_client_phone,
+                busy_dates=busy_dates,
             )
         all_day = request.form.get("all_day") == "1"
         service = Service(
@@ -1241,6 +1254,7 @@ def service_new():
                 assigned_employee_id=request.form.get("employee_id", type=int),
                 assigned_employee_value=decimal_or_zero(request.form.get("helper_value")),
                 quick_client_name=quick_client_name, quick_client_phone=quick_client_phone,
+                busy_dates=busy_dates,
             )
         sync_service_total(service)
         db.session.add(service)
@@ -1279,6 +1293,7 @@ def service_new():
         assigned_employee_id=None, assigned_employee_value=Decimal("0"),
         quick_client_name=(selected_client_obj.name if selected_client_obj else ""),
         quick_client_phone=(selected_client_obj.phone if selected_client_obj else ""),
+        busy_dates=busy_dates,
     )
 
 
@@ -1316,6 +1331,7 @@ def service_edit(service_id):
     clients_list = Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all()
     employees_list = Employee.query.filter_by(active=True).order_by(Employee.name).all()
     current_assignment = ServiceAssignment.query.filter_by(service_id=service.id).first()
+    busy_dates = get_busy_service_dates(exclude_service_id=service.id)
 
     if request.method == "POST":
         client_id = request.form.get("client_id", type=int)
@@ -1327,6 +1343,7 @@ def service_edit(service_id):
                 selected_client=None, selected_date=service.service_date,
                 assigned_employee_id=current_assignment.employee_id if current_assignment else None,
                 assigned_employee_value=current_assignment.helper_value if current_assignment else Decimal("0"),
+                busy_dates=busy_dates,
             )
 
         old_employee_id = current_assignment.employee_id if current_assignment else None
@@ -1404,6 +1421,7 @@ def service_edit(service_id):
         selected_client=service.client_id, selected_date=service.service_date,
         assigned_employee_id=current_assignment.employee_id if current_assignment else None,
         assigned_employee_value=current_assignment.helper_value if current_assignment else Decimal("0"),
+        busy_dates=busy_dates,
     )
 
 
