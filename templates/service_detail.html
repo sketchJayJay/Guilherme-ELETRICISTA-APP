@@ -14,10 +14,10 @@
       <div><small>Recebido</small><strong>{{ service.amount_paid|money }}</strong></div>
       <div><small>Lucro estimado</small><strong class="{{ 'profit-positive' if profit>=0 else 'profit-negative' }}">{{ profit|money }}</strong></div>
     </div>
-    <form method="post" action="{{ url_for('service_value_update', service_id=service.id) }}" class="quick-value-inline no-print">
+    <form id="valor-servico" method="post" action="{{ url_for('service_value_update', service_id=service.id) }}" class="quick-value-inline no-print">
       <div class="quick-value-copy">
-        <small>VALOR DO SERVIÇO</small>
-        <span>Digite e salve direto aqui, sem precisar entrar em Editar.</span>
+        <small>VALOR COMBINADO COM O CLIENTE</small>
+        <span>Digite o valor fechado combinado e toque em Salvar valor. Ele não será substituído pelo cronômetro.</span>
       </div>
       <div class="quick-value-control">
         <span class="quick-value-prefix">R$</span>

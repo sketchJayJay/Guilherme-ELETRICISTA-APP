@@ -861,3 +861,13 @@ body.v6-luxe{
   .service-calendar-weekdays,.service-calendar-grid{gap:5px}
   .service-date-trigger{min-height:64px}
 }
+
+/* Agreed service value: one source of truth + clearer cues */
+.service-value-reminder-box{padding:12px 13px;border-radius:13px;background:rgba(97,181,255,.07);border:1px solid rgba(97,181,255,.16);color:#bfd7f5;line-height:1.45}
+.quick-value-inline{scroll-margin-top:90px}
+.agenda-value{display:block!important;margin-top:7px!important;font-weight:800;color:#80e4b4!important}
+.agenda-value.missing{color:#ffb0b0!important}
+@media(max-width:760px){
+  .service-value-reminder-box{font-size:13px}
+  .quick-value-copy small{font-size:11px;letter-spacing:.05em}
+}

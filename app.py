@@ -405,6 +405,27 @@ def decimal_or_zero(v):
         return Decimal("0")
 
 
+def service_value_from_form(form):
+    """Read the agreed service value without one duplicated field zeroing the other."""
+    raw_main = (form.get("service_value") or "").strip()
+    raw_legacy = (form.get("labor_value") or "").strip()
+    main_value = decimal_or_zero(raw_main) if raw_main else Decimal("0")
+    legacy_value = decimal_or_zero(raw_legacy) if raw_legacy else Decimal("0")
+
+    # The newer, visible field is the main source. For older cached forms that
+    # still send both inputs, keep a non-zero legacy value instead of silently
+    # replacing it with a default 0,00 from the top field.
+    if raw_main and main_value != 0:
+        return main_value
+    if raw_legacy and legacy_value != 0:
+        return legacy_value
+    if raw_main:
+        return main_value
+    if raw_legacy:
+        return legacy_value
+    return Decimal("0")
+
+
 def parse_date(v, default=None):
     if not v:
         return default
@@ -1239,7 +1260,7 @@ def service_new():
             status=request.form.get("status", "scheduled"),
             charge_type=request.form.get("charge_type", "fixed"),
             hourly_rate=decimal_or_zero(request.form.get("hourly_rate")),
-            labor_value=decimal_or_zero(request.form.get("service_value") or request.form.get("labor_value")),
+            labor_value=service_value_from_form(request.form),
             material_value=decimal_or_zero(request.form.get("material_value")),
             discount=decimal_or_zero(request.form.get("discount")),
             amount_paid=decimal_or_zero(request.form.get("amount_paid")),
@@ -1365,7 +1386,7 @@ def service_edit(service_id):
         service.status = request.form.get("status", service.status)
         service.charge_type = request.form.get("charge_type", service.charge_type)
         service.hourly_rate = decimal_or_zero(request.form.get("hourly_rate"))
-        service.labor_value = decimal_or_zero(request.form.get("service_value") or request.form.get("labor_value"))
+        service.labor_value = service_value_from_form(request.form)
         service.material_value = decimal_or_zero(request.form.get("material_value"))
         service.discount = decimal_or_zero(request.form.get("discount"))
         service.amount_paid = decimal_or_zero(request.form.get("amount_paid"))

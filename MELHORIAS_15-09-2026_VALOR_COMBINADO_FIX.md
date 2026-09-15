@@ -1,0 +1,5 @@
+- Corrigido conflito entre dois campos de valor do serviço que podiam fazer um valor digitado ser sobrescrito por `0,00`.
+- O formulário agora possui um único campo principal: **Valor combinado do serviço**.
+- Formulários antigos em cache continuam compatíveis: se enviarem o campo legado com valor, o backend preserva o valor não-zero.
+- A tela do serviço mantém edição direta do **Valor combinado com o cliente**.
+- A Agenda passa a avisar quando um serviço ainda está **sem valor informado**.

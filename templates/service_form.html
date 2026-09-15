@@ -60,9 +60,9 @@
     </div>
 
     <div class="field full quick-step quick-value-step">
-      <label><span class="step-dot">4</span> Valor do serviço <span class="optional-tag">opcional</span></label>
+      <label><span class="step-dot">4</span> Valor combinado do serviço <span class="optional-tag">opcional</span></label>
       <div class="money-input-wrap"><span>R$</span><input class="input input-lg" name="service_value" inputmode="decimal" placeholder="0,00" value="{{ service.labor_value if service else '' }}"></div>
-      <div class="help">Pode salvar o valor aqui direto. Materiais, desconto e forma de pagamento continuam em Mais opções.</div>
+      <div class="help">Digite aqui o valor combinado com o cliente. Este é o único campo que define a mão de obra do serviço.</div>
     </div>
 
     <div class="field full quick-save-row">
@@ -130,10 +130,9 @@
             <label>Valor por hora</label>
             <input class="input" name="hourly_rate" inputmode="decimal" value="{{ service.hourly_rate if service else app_settings.hourly_rate }}">
           </div>
-          <div class="field fixed">
-            <label>Mão de obra / ajuste avançado</label>
-            <input class="input" name="labor_value" inputmode="decimal" value="{{ service.labor_value if service else '0' }}">
-            <div class="help">Se o campo “Valor do serviço” acima estiver preenchido, ele terá prioridade.</div>
+          <div class="field fixed service-value-reminder">
+            <label>Valor combinado</label>
+            <div class="service-value-reminder-box">Use somente o campo <strong>4 · Valor do serviço</strong> acima. Ele é o valor cobrado do cliente.</div>
           </div>
           <div class="field">
             <label>Materiais cobrados</label>
