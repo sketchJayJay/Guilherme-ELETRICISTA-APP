@@ -12,7 +12,10 @@
       {% set items = grouped.get(d, []) %}
       <a class="month-cell {% if d.month != start.month %}other-month{% endif %} {% if d==today %}today{% endif %} {% if items %}has-service{% endif %}" href="{{ url_for('agenda', view='day', date=d.isoformat()) }}">
         <div class="month-cell-top">
-          <span class="month-day-num">{{ d.day }}</span>
+          <div class="month-date-label">
+            <span class="month-day-num">{{ d.day }}</span>
+            <span class="month-weekday">{{ ['SEG','TER','QUA','QUI','SEX','SÁB','DOM'][d.weekday()] }}</span>
+          </div>
           {% if items %}<span class="month-count">{{ items|length }}</span>{% endif %}
         </div>
         {% if items %}

@@ -1,0 +1,3 @@
+- Adicionado o **dia da semana dentro de cada quadrinho** da Agenda mensal.
+- Exemplo: `5 · SEG`, `6 · TER`, `7 · QUA`.
+- Dias ocupados continuam destacados em vermelho e o dia atual mantém o destaque amarelo.

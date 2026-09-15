@@ -871,3 +871,13 @@ body.v6-luxe{
   .service-value-reminder-box{font-size:13px}
   .quick-value-copy small{font-size:11px;letter-spacing:.05em}
 }
+
+/* Agenda mensal: exibe o dia da semana dentro de cada card */
+.month-date-label{display:flex;align-items:baseline;gap:7px;min-width:0}
+.month-weekday{font-size:10px;font-weight:950;letter-spacing:.08em;color:#8ea5c8}
+.month-cell.has-service .month-weekday{color:#ff9aa8}
+.month-cell.today .month-weekday{color:#ffd84d}
+@media(max-width:760px){
+  .month-date-label{gap:6px}
+  .month-weekday{font-size:9px}
+}
