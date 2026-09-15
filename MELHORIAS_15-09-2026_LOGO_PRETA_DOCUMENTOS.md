@@ -1,0 +1,3 @@
+- Restaurada a logo preta anterior exclusivamente nos documentos impressos.
+- Orçamento/PDF e OS/nota agora usam `static/brand-logo-doc.png` com a versão preta.
+- A logo colorida do sistema/app permanece inalterada em `static/brand-logo.png`.
