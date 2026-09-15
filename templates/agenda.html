@@ -10,25 +10,41 @@
   <div class="month-grid">
     {% for d in month_cells %}
       {% set items = grouped.get(d, []) %}
-      <a class="month-cell {% if d.month != start.month %}other-month{% endif %} {% if d==today %}today{% endif %} {% if items %}has-service{% endif %}" href="{{ url_for('agenda', view='day', date=d.isoformat()) }}">
+      <div class="month-cell {% if d.month != start.month %}other-month{% endif %} {% if d==today %}today{% endif %} {% if items %}has-service{% endif %}">
         <div class="month-cell-top">
-          <div class="month-date-label">
-            <span class="month-day-num">{{ d.day }}</span>
-            <span class="month-weekday">{{ ['SEG','TER','QUA','QUI','SEX','SÁB','DOM'][d.weekday()] }}</span>
-          </div>
+          <a class="month-date-link" href="{{ url_for('agenda', view='day', date=d.isoformat()) }}" aria-label="Abrir agenda de {{ d|datebr }}">
+            <span class="month-date-label">
+              <span class="month-day-num">{{ d.day }}</span>
+              <span class="month-weekday">{{ ['SEG','TER','QUA','QUI','SEX','SÁB','DOM'][d.weekday()] }}</span>
+            </span>
+          </a>
           {% if items %}<span class="month-count">{{ items|length }}</span>{% endif %}
         </div>
         {% if items %}
-          <div class="month-preview">
-            {% for s in items[:2] %}
-              <div class="month-preview-item">{{ s.title }}</div>
-            {% endfor %}
-            {% if items|length > 2 %}<div class="month-preview-more">+ {{ items|length - 2 }} serviço(s)</div>{% endif %}
+          <div class="month-preview month-service-picker">
+            {% set first = items[0] %}
+            <a class="month-preview-item month-service-link" href="{{ url_for('service_detail', service_id=first.id) }}">
+              <strong>{{ first.title }}</strong>
+              <small>{{ first.client.name }} · <span class="agenda-inline-status {{ first.status }}">{{ status_labels[first.status] }}</span></small>
+            </a>
+            {% if items|length > 1 %}
+            <details class="month-extra-services">
+              <summary>＋ Ver mais {{ items|length - 1 }} serviço{% if items|length - 1 > 1 %}s{% endif %}</summary>
+              <div class="month-extra-list">
+                {% for s in items[1:] %}
+                <a class="month-preview-item month-service-link" href="{{ url_for('service_detail', service_id=s.id) }}">
+                  <strong>{{ s.title }}</strong>
+                  <small>{{ s.client.name }} · <span class="agenda-inline-status {{ s.status }}">{{ status_labels[s.status] }}</span></small>
+                </a>
+                {% endfor %}
+              </div>
+            </details>
+            {% endif %}
           </div>
         {% else %}
-          <div class="month-empty">Livre</div>
+          <a class="month-empty month-free-link" href="{{ url_for('service_new', date=d.isoformat()) }}">Livre · + adicionar</a>
         {% endif %}
-      </a>
+      </div>
     {% endfor %}
   </div>
 </div>

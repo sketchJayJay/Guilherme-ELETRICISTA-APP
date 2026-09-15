@@ -1,0 +1,4 @@
+- Na Agenda mensal, quando um dia tem mais de um serviço, o primeiro aparece normalmente.
+- Abaixo dele aparece **“Ver mais X serviço(s)”**.
+- Ao tocar, a lista abre dentro do próprio dia e permite escolher exatamente qual serviço abrir.
+- O contador vermelho continua mostrando a quantidade total de serviços daquele dia.
