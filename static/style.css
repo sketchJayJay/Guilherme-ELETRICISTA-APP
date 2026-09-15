@@ -881,3 +881,39 @@ body.v6-luxe{
   .month-date-label{gap:6px}
   .month-weekday{font-size:9px}
 }
+
+/* ===== Dias trabalhados / ajudante ===== */
+.workday-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}
+.workday-stat{position:relative;overflow:hidden;padding:18px;border-radius:20px;background:linear-gradient(155deg,#0b1a2d,#071321);border:1px solid #173a5b;box-shadow:0 14px 34px rgba(0,0,0,.18)}
+.workday-stat:after{content:"";position:absolute;width:100px;height:100px;border-radius:50%;right:-35px;bottom:-45px;background:currentColor;opacity:.05}
+.workday-stat small{display:block;color:#91a8c9;font-size:10px;font-weight:900;letter-spacing:.09em}
+.workday-stat strong{display:block;margin-top:8px;font-size:25px;line-height:1.1;color:#fff}
+.workday-stat span{display:block;margin-top:7px;color:#8ea4c4;font-size:11px}
+.workday-stat.pending{color:#ffd84d;border-color:rgba(255,216,77,.22)}
+.workday-stat.paid{color:#38d996;border-color:rgba(56,217,150,.22)}
+.workday-stat.total{color:#61b5ff;border-color:rgba(97,181,255,.22)}
+.workday-layout{grid-template-columns:.85fr 1.15fr;align-items:start}
+.workday-form-card{position:sticky;top:88px}
+.workday-info{padding:12px 14px;border-radius:14px;background:rgba(97,181,255,.07);border:1px solid rgba(97,181,255,.14);color:#adc2df;font-size:12px;line-height:1.45}
+.workday-month-filter{display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:14px}
+.workday-list{display:grid;gap:10px}
+.workday-row{display:grid;grid-template-columns:58px minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:12px;border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.012));border:1px solid var(--line)}
+.workday-date-box{width:54px;height:54px;border-radius:15px;display:grid;place-items:center;background:rgba(97,181,255,.08);border:1px solid rgba(97,181,255,.15);line-height:1}
+.workday-date-box strong{font-size:20px;color:#eef6ff}
+.workday-date-box span{font-size:9px;color:#8da5c8;font-weight:900;letter-spacing:.04em}
+.workday-main{min-width:0}
+.workday-main strong{display:block;font-size:14px}
+.workday-main span{display:block;margin-top:4px;color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.workday-value{text-align:right;display:grid;gap:6px;justify-items:end}
+.workday-value strong{font-size:15px}
+.workday-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+@media(max-width:1000px){.workday-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.workday-layout{grid-template-columns:1fr}.workday-form-card{position:static}}
+@media(max-width:760px){
+  .workday-summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+  .workday-stat{padding:14px;border-radius:17px}.workday-stat strong{font-size:20px}
+  .workday-row{grid-template-columns:50px minmax(0,1fr) auto;gap:9px;padding:10px}
+  .workday-date-box{width:48px;height:48px;border-radius:14px}
+  .workday-actions{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr}
+  .workday-actions form,.workday-actions .btn{width:100%}
+  .workday-value strong{font-size:14px}
+}

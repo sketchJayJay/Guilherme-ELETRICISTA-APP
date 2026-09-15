@@ -1,0 +1,117 @@
+{% extends 'base.html' %}
+{% block title %}Dias trabalhados · {{ app_settings.business_name }}{% endblock %}
+{% block content %}
+<div class="page-head workday-head">
+  <div>
+    <div class="eyebrow">EQUIPE / AJUDANTE</div>
+    <h1>Dias trabalhados</h1>
+    <p>Registre o dia que o ajudante trabalhou e quanto deverá receber.</p>
+  </div>
+  <div class="actions">
+    <a class="btn" href="{{ url_for('team') }}">← Equipe</a>
+    <a class="btn" href="{{ url_for('team_task_new') }}">+ Tarefa</a>
+  </div>
+</div>
+
+<div class="workday-summary">
+  <div class="workday-stat"><small>DIAS LANÇADOS</small><strong>{{ workdays|length }}</strong><span>{{ month_label }}</span></div>
+  <div class="workday-stat pending"><small>A PAGAR</small><strong>{{ pending_total|money }}</strong><span>Diárias pendentes</span></div>
+  <div class="workday-stat paid"><small>JÁ PAGO</small><strong>{{ paid_total|money }}</strong><span>Já saiu do caixa</span></div>
+  <div class="workday-stat total"><small>TOTAL DO MÊS</small><strong>{{ total|money }}</strong><span>Pago + pendente</span></div>
+</div>
+
+<div class="two-col workday-layout">
+  <div class="card workday-form-card">
+    <div class="card-head"><h2>＋ Registrar dia trabalhado</h2></div>
+    <div class="card-body">
+      {% if employees %}
+      <form method="post" class="form-grid" id="workdayForm">
+        <div class="field full">
+          <label>Ajudante</label>
+          <select class="select input-lg" name="employee_id" id="workdayEmployee" required onchange="fillWorkdayRate()">
+            <option value="">Selecione o ajudante...</option>
+            {% for e in employees %}
+            <option value="{{ e.id }}" data-rate="{{ e.rate or 0 }}">{{ e.name }}{% if e.rate %} · referência {{ e.rate|money }}{% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label>Dia que trabalhou</label>
+          <input class="input input-lg" type="date" name="work_date" value="{{ today.isoformat() }}" required>
+        </div>
+        <div class="field">
+          <label>Valor a pagar</label>
+          <input class="input input-lg" id="workdayAmount" name="amount" inputmode="decimal" placeholder="Ex.: 150,00" required>
+        </div>
+        <div class="field">
+          <label>Situação</label>
+          <select class="select" name="status">
+            <option value="pending" selected>A pagar</option>
+            <option value="paid">Pago agora</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Observação</label>
+          <input class="input" name="notes" placeholder="Ex.: diária obra do João">
+        </div>
+        <div class="field full">
+          <div class="workday-info">💡 Se ficar como <strong>A pagar</strong>, o valor entra como pendência. Quando pagar, é só tocar em <strong>Marcar pago</strong>.</div>
+        </div>
+        <div class="field full"><button class="btn primary btn-lg" type="submit">✓ Salvar dia trabalhado</button></div>
+      </form>
+      {% else %}
+      <div class="empty">Cadastre um ajudante primeiro em <a href="{{ url_for('employee_new') }}">+ Ajudante</a>.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card workday-history-card">
+    <div class="card-head"><h2>Histórico</h2></div>
+    <div class="card-body">
+      <form method="get" class="workday-month-filter">
+        <input class="input" type="month" name="month" value="{{ month_value }}">
+        <button class="btn" type="submit">Ver mês</button>
+      </form>
+      <div class="workday-list">
+        {% for x in workdays %}
+        <div class="workday-row">
+          <div class="workday-date-box"><strong>{{ x.expense_date.strftime('%d') }}</strong><span>{{ ['SEG','TER','QUA','QUI','SEX','SÁB','DOM'][x.expense_date.weekday()] }}</span></div>
+          <div class="workday-main">
+            <strong>{{ x.employee.name }}</strong>
+            <span>{{ x.expense_date|datebr }}{% if x.notes and x.notes != 'Dia trabalhado' %} · {{ x.notes }}{% endif %}</span>
+          </div>
+          <div class="workday-value">
+            <strong>{{ x.amount|money }}</strong>
+            <span class="badge {{ 'paid' if x.status=='paid' else 'pending' }}">{{ 'Pago' if x.status=='paid' else 'A pagar' }}</span>
+          </div>
+          <div class="workday-actions">
+            <form method="post" action="{{ url_for('employee_expense_toggle', expense_id=x.id) }}">
+              <button class="btn sm {{ 'ghost' if x.status=='paid' else 'success' }}" type="submit">{{ 'Voltar pendente' if x.status=='paid' else 'Marcar pago' }}</button>
+            </form>
+            <form method="post" action="{{ url_for('employee_expense_delete', expense_id=x.id) }}" onsubmit="return confirmDelete('Excluir este dia trabalhado também do financeiro?')">
+              <button class="btn sm danger" type="submit">Excluir</button>
+            </form>
+          </div>
+        </div>
+        {% else %}
+        <div class="empty">Nenhum dia trabalhado lançado em {{ month_label }}.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function fillWorkdayRate(){
+  var select=document.getElementById('workdayEmployee');
+  var amount=document.getElementById('workdayAmount');
+  if(!select || !amount || amount.value) return;
+  var option=select.options[select.selectedIndex];
+  if(!option) return;
+  var rate=option.getAttribute('data-rate');
+  if(rate && Number(rate)>0){ amount.value=Number(rate).toFixed(2).replace('.',','); }
+}
+</script>
+{% endblock %}

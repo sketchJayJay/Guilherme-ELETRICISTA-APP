@@ -1,0 +1,6 @@
+- Adicionada nova aba **Equipe > Dias trabalhados**.
+- Permite registrar ajudante, dia trabalhado, valor da diária, situação (A pagar/Pago) e observação.
+- Se o ajudante tiver valor de referência cadastrado, o campo de valor é preenchido automaticamente.
+- Cada diária é sincronizada com o Financeiro como despesa de **Equipe / Ajudante**.
+- Mostra resumo mensal: dias lançados, a pagar, já pago e total do mês.
+- Histórico permite marcar como pago, voltar para pendente e excluir.

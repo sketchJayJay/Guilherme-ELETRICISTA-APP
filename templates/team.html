@@ -1,5 +1,5 @@
 {% extends 'base.html' %}{% block title %}Equipe · {{ app_settings.business_name }}{% endblock %}{% block content %}
-<div class="page-head"><div><h1>Equipe / Ajudantes</h1><p>Serviços, tarefas, horas e gastos de quem trabalha com você.</p></div><div class="actions"><a class="btn" href="{{ url_for('team_task_new') }}">+ Tarefa</a><a class="btn primary" href="{{ url_for('employee_new') }}">+ Ajudante</a></div></div>
+<div class="page-head"><div><h1>Equipe / Ajudantes</h1><p>Serviços, tarefas, dias trabalhados e pagamentos da equipe.</p></div><div class="actions"><a class="btn blue" href="{{ url_for('team_workdays') }}">📅 Dias trabalhados</a><a class="btn" href="{{ url_for('team_task_new') }}">+ Tarefa</a><a class="btn primary" href="{{ url_for('employee_new') }}">+ Ajudante</a></div></div>
 <div class="grid team-cards">
 {% for card in cards %}
 <div class="card team-card {% if not card.employee.active %}team-inactive{% endif %}">

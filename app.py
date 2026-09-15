@@ -2981,6 +2981,74 @@ def team():
     return render_template("team.html", cards=cards)
 
 
+@app.route("/team/workdays", methods=["GET", "POST"])
+@admin_required
+def team_workdays():
+    employees = Employee.query.filter_by(active=True).order_by(Employee.name).all()
+
+    if request.method == "POST":
+        employee_id = request.form.get("employee_id", type=int)
+        employee = db.session.get(Employee, employee_id) if employee_id else None
+        if not employee:
+            flash("Selecione o ajudante.", "error")
+            return redirect(url_for("team_workdays"))
+
+        work_date = parse_date(request.form.get("work_date"), local_today())
+        amount = decimal_or_zero(request.form.get("amount"))
+        if amount <= 0:
+            flash("Informe o valor que será pago por esse dia.", "error")
+            return redirect(url_for("team_workdays", month=work_date.strftime("%Y-%m")))
+
+        status = request.form.get("status", "pending")
+        if status not in ("pending", "paid"):
+            status = "pending"
+
+        notes = request.form.get("notes", "").strip()
+        expense = EmployeeExpense(
+            employee_id=employee.id,
+            expense_date=work_date,
+            category="daily",
+            amount=amount,
+            status=status,
+            notes=notes or "Dia trabalhado",
+        )
+        db.session.add(expense)
+        db.session.flush()
+        sync_employee_expense_finance(expense)
+        db.session.commit()
+        flash(f"Dia trabalhado de {employee.name} lançado. Valor: {money_filter(amount)}.", "success")
+        return redirect(url_for("team_workdays", month=work_date.strftime("%Y-%m")))
+
+    month_start, next_month, month_value, month_label = parse_month_value(request.args.get("month"))
+    workdays = (
+        EmployeeExpense.query
+        .filter(
+            EmployeeExpense.category == "daily",
+            EmployeeExpense.expense_date >= month_start,
+            EmployeeExpense.expense_date < next_month,
+        )
+        .join(Employee)
+        .order_by(EmployeeExpense.expense_date.desc(), Employee.name.asc(), EmployeeExpense.id.desc())
+        .all()
+    )
+    paid_total = sum((Decimal(x.amount or 0) for x in workdays if x.status == "paid"), Decimal("0"))
+    pending_total = sum((Decimal(x.amount or 0) for x in workdays if x.status == "pending"), Decimal("0"))
+    total = paid_total + pending_total
+
+    return render_template(
+        "team_workdays.html",
+        employees=employees,
+        workdays=workdays,
+        month_start=month_start,
+        next_month=next_month,
+        month_value=month_value,
+        month_label=month_label,
+        paid_total=paid_total,
+        pending_total=pending_total,
+        total=total,
+    )
+
+
 @app.route("/team/new", methods=["GET", "POST"])
 @admin_required
 def employee_new():
@@ -3210,7 +3278,7 @@ def employee_expense_delete(expense_id):
     db.session.delete(expense)
     db.session.commit()
     flash("Gasto excluído do controle da equipe e do financeiro.", "success")
-    return redirect(url_for("employee_detail", employee_id=employee_id))
+    return redirect(request.referrer or url_for("employee_detail", employee_id=employee_id))
 
 
 # -------------------- Área do ajudante --------------------
