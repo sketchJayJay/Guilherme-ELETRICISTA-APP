@@ -146,6 +146,7 @@
           <div class="field">
             <label>Já recebido</label>
             <input class="input" name="amount_paid" inputmode="decimal" value="{{ service.amount_paid if service else '0' }}">
+            <div class="help">Esse valor entra em <strong>Recebido no mês</strong>. Se for menor que o total, o restante fica automaticamente em <strong>A receber</strong>.</div>
           </div>
           <div class="field">
             <label>Forma de pagamento</label>

@@ -906,33 +906,105 @@ def sync_service_total(service):
         service.payment_status = "partial"
 
 
-def ensure_income_entry(service):
-    # Keep one service-linked receivable synchronized with total / payment status.
-    entry = FinanceEntry.query.filter_by(service_id=service.id, type="income").first()
-    if Decimal(service.total_value or 0) <= 0:
-        return
-    if not entry:
-        entry = FinanceEntry(
-            type="income",
-            client_id=service.client_id,
-            service_id=service.id,
-            description=f"Serviço #{service.id} - {service.title}",
-            category="Serviços",
-            amount=service.total_value,
-            due_date=service.service_date,
-            status="paid" if service.payment_status == "paid" else "pending",
-            paid_date=date.today() if service.payment_status == "paid" else None,
-            payment_method=service.payment_method or "",
-        )
-        db.session.add(entry)
+AUTO_SERVICE_PAYMENT_NOTE = "__AUTO_SERVICE_PAYMENT__"
+AUTO_SERVICE_RECEIVABLE_NOTE = "__AUTO_SERVICE_RECEIVABLE__"
+
+
+def ensure_income_entry(service, payment_date=None):
+    """Sincroniza o financeiro do serviço sem perder recebimentos parciais."""
+    total = max(Decimal("0"), Decimal(service.total_value or 0))
+    target_paid = min(total, max(Decimal("0"), Decimal(service.amount_paid or 0)))
+    service.amount_paid = target_paid
+
+    if target_paid <= 0:
+        service.payment_status = "pending"
+    elif target_paid >= total and total > 0:
+        service.payment_status = "paid"
     else:
-        entry.client_id = service.client_id
-        entry.description = f"Serviço #{service.id} - {service.title}"
-        entry.amount = service.total_value
-        entry.due_date = service.service_date
-        entry.status = "paid" if service.payment_status == "paid" else "pending"
-        entry.paid_date = date.today() if service.payment_status == "paid" else None
-        entry.payment_method = service.payment_method or entry.payment_method
+        service.payment_status = "partial"
+
+    entries = FinanceEntry.query.filter_by(service_id=service.id, type="income").order_by(FinanceEntry.id.asc()).all()
+    legacy_entries = [e for e in entries if e.notes not in {AUTO_SERVICE_PAYMENT_NOTE, AUTO_SERVICE_RECEIVABLE_NOTE}]
+
+    if legacy_entries:
+        old_paid_date = next((e.paid_date or e.due_date for e in legacy_entries if e.status == "paid"), None)
+        for e in legacy_entries:
+            db.session.delete(e)
+        db.session.flush()
+        if target_paid > 0:
+            paid_on = old_paid_date or payment_date or local_today()
+            db.session.add(FinanceEntry(
+                type="income", client_id=service.client_id, service_id=service.id,
+                description=f"Recebimento serviço #{service.id} - {service.title}",
+                category="Serviços", amount=target_paid, due_date=paid_on, paid_date=paid_on,
+                status="paid", payment_method=service.payment_method or "", notes=AUTO_SERVICE_PAYMENT_NOTE,
+            ))
+        current_paid = target_paid
+    else:
+        paid_entries = [e for e in entries if e.notes == AUTO_SERVICE_PAYMENT_NOTE and e.status == "paid"]
+        current_paid = sum((Decimal(e.amount or 0) for e in paid_entries), Decimal("0"))
+        if target_paid > current_paid:
+            difference = target_paid - current_paid
+            paid_on = payment_date or local_today()
+            db.session.add(FinanceEntry(
+                type="income", client_id=service.client_id, service_id=service.id,
+                description=f"Recebimento serviço #{service.id} - {service.title}",
+                category="Serviços", amount=difference, due_date=paid_on, paid_date=paid_on,
+                status="paid", payment_method=service.payment_method or "", notes=AUTO_SERVICE_PAYMENT_NOTE,
+            ))
+        elif target_paid < current_paid:
+            reduction = current_paid - target_paid
+            for e in sorted(paid_entries, key=lambda x: x.id or 0, reverse=True):
+                amount = Decimal(e.amount or 0)
+                if reduction <= 0:
+                    break
+                if amount <= reduction:
+                    reduction -= amount
+                    db.session.delete(e)
+                else:
+                    e.amount = amount - reduction
+                    reduction = Decimal("0")
+
+    db.session.flush()
+
+    for e in FinanceEntry.query.filter_by(service_id=service.id, type="income").filter(FinanceEntry.notes == AUTO_SERVICE_PAYMENT_NOTE).all():
+        e.client_id = service.client_id
+        e.description = f"Recebimento serviço #{service.id} - {service.title}"
+        e.category = "Serviços"
+        if service.payment_method:
+            e.payment_method = service.payment_method
+
+    remaining = max(Decimal("0"), total - target_paid)
+    pending_entries = FinanceEntry.query.filter_by(service_id=service.id, type="income").filter(FinanceEntry.notes == AUTO_SERVICE_RECEIVABLE_NOTE).order_by(FinanceEntry.id.asc()).all()
+    pending = pending_entries[0] if pending_entries else None
+    for extra in pending_entries[1:]:
+        db.session.delete(extra)
+
+    if remaining > 0:
+        if pending is None:
+            pending = FinanceEntry(type="income", service_id=service.id, notes=AUTO_SERVICE_RECEIVABLE_NOTE)
+            db.session.add(pending)
+        pending.client_id = service.client_id
+        pending.description = f"A receber serviço #{service.id} - {service.title}"
+        pending.category = "Serviços"
+        pending.amount = remaining
+        pending.due_date = service.service_date
+        pending.paid_date = None
+        pending.status = "pending"
+        pending.payment_method = service.payment_method or ""
+    elif pending is not None:
+        db.session.delete(pending)
+
+
+def repair_service_income_entries():
+    changed = False
+    for service in Service.query.all():
+        has_entry = FinanceEntry.query.filter_by(service_id=service.id, type="income").first() is not None
+        if Decimal(service.total_value or 0) > 0 or has_entry:
+            ensure_income_entry(service)
+            changed = True
+    if changed:
+        db.session.commit()
 
 
 # -------------------- Auth / setup --------------------
@@ -2766,6 +2838,9 @@ def finance_edit(entry_id):
     if team_expense:
         flash("Esse lançamento pertence ao controle da equipe. Edite pelo cadastro do ajudante para manter tudo sincronizado.", "error")
         return redirect(url_for("employee_detail", employee_id=team_expense.employee_id))
+    if entry.type == "income" and entry.service_id:
+        flash("Esse recebimento pertence a um serviço. Altere o valor recebido dentro do próprio serviço para manter o financeiro sincronizado.", "error")
+        return redirect(url_for("service_detail", service_id=entry.service_id))
     clients_list = Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).order_by(Client.name).all()
     if request.method == "POST":
         entry.type = request.form.get("type", entry.type)
@@ -2792,21 +2867,35 @@ def finance_edit(entry_id):
 @login_required
 def finance_toggle(entry_id):
     entry = FinanceEntry.query.get_or_404(entry_id)
+
+    if entry.type == "income" and entry.service_id:
+        service = Service.query.get(entry.service_id)
+        if service:
+            if entry.status == "pending":
+                service.amount_paid = Decimal(service.total_value or 0)
+                sync_service_total(service)
+                ensure_income_entry(service, payment_date=local_today())
+                db.session.commit()
+                flash("Recebimento do serviço marcado como pago.", "success")
+                return redirect(request.referrer or url_for("finance"))
+
+            paid_amount = Decimal(entry.amount or 0)
+            service.amount_paid = max(Decimal("0"), Decimal(service.amount_paid or 0) - paid_amount)
+            db.session.delete(entry)
+            db.session.flush()
+            sync_service_total(service)
+            ensure_income_entry(service)
+            db.session.commit()
+            flash("Recebimento voltou para pendente.", "success")
+            return redirect(request.referrer or url_for("finance"))
+
     if entry.status == "paid":
         entry.status = "pending"
         entry.paid_date = None
     else:
         entry.status = "paid"
-        entry.paid_date = date.today()
-    if entry.type == "income" and entry.service_id:
-        service = Service.query.get(entry.service_id)
-        if service:
-            if entry.status == "paid":
-                service.amount_paid = service.total_value
-                service.payment_status = "paid"
-            elif service.payment_status == "paid":
-                service.amount_paid = 0
-                service.payment_status = "pending"
+        entry.paid_date = local_today()
+
     team_expense = EmployeeExpense.query.filter_by(finance_entry_id=entry.id).first()
     if team_expense:
         team_expense.status = entry.status
@@ -3631,6 +3720,7 @@ def health():
 with app.app_context():
     db.create_all()
     migrate_schema()
+    repair_service_income_entries()
     ensure_vapid_keys()
 
 start_daily_notification_scheduler()
