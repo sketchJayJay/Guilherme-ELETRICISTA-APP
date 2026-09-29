@@ -997,14 +997,71 @@ def ensure_income_entry(service, payment_date=None):
 
 
 def repair_service_income_entries():
-    changed = False
-    for service in Service.query.all():
-        has_entry = FinanceEntry.query.filter_by(service_id=service.id, type="income").first() is not None
-        if Decimal(service.total_value or 0) > 0 or has_entry:
-            ensure_income_entry(service)
-            changed = True
-    if changed:
-        db.session.commit()
+    """Compatibilidade: mantém a rotina antiga apontando para a nova reconciliação."""
+    return repair_financial_history()
+
+
+def repair_financial_history():
+    """Reconcilia histórico financeiro antigo sem duplicar lançamentos."""
+    repaired_services = 0
+    repaired_expenses = 0
+    repaired_dates = 0
+
+    # Serviços antigos: transforma amount_paid salvo no serviço em entradas pagas
+    # e deixa somente o saldo restante como A receber.
+    for service in Service.query.order_by(Service.id.asc()).all():
+        total = Decimal(service.total_value or 0)
+        paid = Decimal(service.amount_paid or 0)
+        linked_entries = FinanceEntry.query.filter_by(service_id=service.id, type="income").all()
+        if total <= 0 and paid <= 0 and not linked_entries:
+            continue
+
+        existing_paid_date = next(
+            (e.paid_date or e.due_date for e in linked_entries if e.status == "paid" and Decimal(e.amount or 0) > 0),
+            None,
+        )
+        # Em dados antigos sem data de recebimento registrada, usa a data do serviço
+        # para não jogar todos os valores no mês do redeploy.
+        historical_payment_date = existing_paid_date or service.service_date or local_today()
+        ensure_income_entry(service, payment_date=historical_payment_date)
+        repaired_services += 1
+
+    db.session.flush()
+
+    # Gastos antigos da equipe: religa ao Financeiro e evita criar duplicata quando
+    # já existe uma saída equivalente, mas o finance_entry_id ficou perdido.
+    for expense in EmployeeExpense.query.order_by(EmployeeExpense.id.asc()).all():
+        linked = db.session.get(FinanceEntry, expense.finance_entry_id) if expense.finance_entry_id else None
+        if linked is None:
+            employee_name = expense.employee.name if expense.employee else ""
+            candidates = FinanceEntry.query.filter(
+                FinanceEntry.type == "expense",
+                FinanceEntry.category == "Equipe / Ajudante",
+                FinanceEntry.due_date == expense.expense_date,
+                FinanceEntry.amount == expense.amount,
+            ).all()
+            for candidate in candidates:
+                if expense.service_id is not None and candidate.service_id not in (None, expense.service_id):
+                    continue
+                if employee_name and employee_name.lower() not in (candidate.description or "").lower():
+                    continue
+                expense.finance_entry_id = candidate.id
+                break
+        sync_employee_expense_finance(expense)
+        repaired_expenses += 1
+
+    # Baixas antigas marcadas como pagas mas sem data não entram nos totais mensais.
+    # Corrige usando a própria data de vencimento/lançamento.
+    for entry in FinanceEntry.query.filter(FinanceEntry.status == "paid", FinanceEntry.paid_date.is_(None)).all():
+        entry.paid_date = entry.due_date or local_today()
+        repaired_dates += 1
+
+    db.session.commit()
+    app.logger.info(
+        "Reconciliação financeira: %s serviços, %s gastos de equipe, %s datas corrigidas.",
+        repaired_services, repaired_expenses, repaired_dates,
+    )
+    return repaired_services, repaired_expenses, repaired_dates
 
 
 # -------------------- Auth / setup --------------------
@@ -3720,7 +3777,7 @@ def health():
 with app.app_context():
     db.create_all()
     migrate_schema()
-    repair_service_income_entries()
+    repair_financial_history()
     ensure_vapid_keys()
 
 start_daily_notification_scheduler()
