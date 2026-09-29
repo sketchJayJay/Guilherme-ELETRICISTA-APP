@@ -908,6 +908,7 @@ def sync_service_total(service):
 
 AUTO_SERVICE_PAYMENT_NOTE = "__AUTO_SERVICE_PAYMENT__"
 AUTO_SERVICE_RECEIVABLE_NOTE = "__AUTO_SERVICE_RECEIVABLE__"
+AUTO_HELPER_SERVICE_NOTE = "__AUTO_HELPER_SERVICE__"
 
 
 def ensure_income_entry(service, payment_date=None):
@@ -1014,6 +1015,8 @@ def repair_financial_history():
         paid = Decimal(service.amount_paid or 0)
         linked_entries = FinanceEntry.query.filter_by(service_id=service.id, type="income").all()
         if total <= 0 and paid <= 0 and not linked_entries:
+            # Mesmo serviço sem valor de cliente pode ter valor de ajudante salvo.
+            sync_service_helper_expenses(service)
             continue
 
         existing_paid_date = next(
@@ -1024,6 +1027,9 @@ def repair_financial_history():
         # para não jogar todos os valores no mês do redeploy.
         historical_payment_date = existing_paid_date or service.service_date or local_today()
         ensure_income_entry(service, payment_date=historical_payment_date)
+        # Também recupera valores de ajudantes que já estavam salvos em
+        # serviços concluídos, mas nunca tinham virado lançamento financeiro.
+        sync_service_helper_expenses(service)
         repaired_services += 1
 
     db.session.flush()
@@ -1420,6 +1426,8 @@ def service_new():
                 helper_value=decimal_or_zero(request.form.get("helper_value")),
             )
             db.session.add(assignment)
+        db.session.flush()
+        sync_service_helper_expenses(service)
         db.session.commit()
 
         if assignment:
@@ -1535,6 +1543,8 @@ def service_edit(service_id):
                 helper_value=decimal_or_zero(request.form.get("helper_value")),
             )
             db.session.add(new_assignment)
+        db.session.flush()
+        sync_service_helper_expenses(service)
         db.session.commit()
 
         if new_assignment:
@@ -1620,6 +1630,8 @@ def service_assign_helper(service_id):
         db.session.add(assignment)
 
     try:
+        db.session.flush()
+        sync_service_helper_expenses(service)
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
@@ -1676,6 +1688,20 @@ def service_mark_paid(service_id):
 @admin_required
 def service_delete(service_id):
     service = Service.query.get_or_404(service_id)
+    # Pendências automáticas do ajudante só existem por causa deste serviço;
+    # ao excluir o serviço elas também devem sair. Pagamentos já realizados
+    # permanecem no histórico financeiro, apenas sem o vínculo com o serviço.
+    auto_helper_expenses = EmployeeExpense.query.filter_by(
+        service_id=service.id, notes=AUTO_HELPER_SERVICE_NOTE
+    ).all()
+    for expense in auto_helper_expenses:
+        if expense.status == "pending":
+            if expense.finance_entry_id:
+                linked = db.session.get(FinanceEntry, expense.finance_entry_id)
+                if linked:
+                    db.session.delete(linked)
+            db.session.delete(expense)
+    db.session.flush()
     FinanceEntry.query.filter_by(service_id=service.id, type="income").delete(synchronize_session=False)
     FinanceEntry.query.filter_by(service_id=service.id, type="expense").update({FinanceEntry.service_id: None}, synchronize_session=False)
     EmployeeExpense.query.filter_by(service_id=service.id).update({EmployeeExpense.service_id: None}, synchronize_session=False)
@@ -1714,6 +1740,10 @@ def service_status(service_id):
                 t.ended_at = datetime.utcnow()
         sync_service_total(service)
         ensure_income_entry(service)
+    # O valor do ajudante vira "A pagar" no financeiro somente quando o
+    # serviço está concluído. Se o status voltar atrás, remove apenas a
+    # pendência automática ainda não paga.
+    sync_service_helper_expenses(service)
     db.session.commit()
     flash("Status atualizado.", "success")
     return redirect(request.referrer or url_for("service_detail", service_id=service.id))
@@ -3094,9 +3124,13 @@ def employee_running_session(employee_id, task_id=None, service_id=None):
 
 
 def sync_employee_expense_finance(expense):
-    description = f"Equipe - {expense.employee.name}: {dict(daily='Diária', meal='Alimentação', fuel='Combustível', advance='Adiantamento', payment='Pagamento', other='Outro').get(expense.category, expense.category)}"
-    if expense.notes:
-        description += f" - {expense.notes}"
+    label = dict(daily='Diária', meal='Alimentação', fuel='Combustível', advance='Adiantamento', payment='Pagamento', other='Outro').get(expense.category, expense.category)
+    if expense.notes == AUTO_HELPER_SERVICE_NOTE and expense.service:
+        description = f"Equipe - {expense.employee.name}: Pagamento serviço #{expense.service.id} - {expense.service.title}"
+    else:
+        description = f"Equipe - {expense.employee.name}: {label}"
+        if expense.notes:
+            description += f" - {expense.notes}"
     entry = db.session.get(FinanceEntry, expense.finance_entry_id) if expense.finance_entry_id else None
     if not entry:
         entry = FinanceEntry(type="expense", service_id=expense.service_id, description=description, category="Equipe / Ajudante", amount=expense.amount, due_date=expense.expense_date, status=expense.status)
@@ -3109,7 +3143,95 @@ def sync_employee_expense_finance(expense):
     entry.amount = expense.amount
     entry.due_date = expense.expense_date
     entry.status = expense.status
-    entry.paid_date = expense.expense_date if expense.status == "paid" else None
+    if expense.status == "paid":
+        # Para pagamento automático do ajudante, preserva a data real da baixa.
+        # Nos lançamentos manuais antigos, mantém a data informada no gasto.
+        if expense.notes == AUTO_HELPER_SERVICE_NOTE:
+            entry.paid_date = entry.paid_date or local_today()
+        else:
+            entry.paid_date = expense.expense_date
+    else:
+        entry.paid_date = None
+
+
+def sync_service_helper_expenses(service):
+    """Sincroniza o valor combinado com ajudantes de um serviço concluído.
+
+    O valor do ajudante nasce como pendente (A pagar). A despesa só entra no
+    saldo mensal depois que o proprietário der baixa. A rotina é idempotente:
+    pode rodar em todo redeploy sem duplicar lançamentos.
+    """
+    if not service or not service.id:
+        return
+
+    auto_expenses = EmployeeExpense.query.filter_by(
+        service_id=service.id, notes=AUTO_HELPER_SERVICE_NOTE
+    ).order_by(EmployeeExpense.id.asc()).all()
+
+    # Se o serviço deixou de estar concluído, desfaz somente pendências
+    # automáticas. Pagamentos já baixados permanecem como histórico.
+    if service.status != "completed":
+        for expense in auto_expenses:
+            if expense.status != "pending":
+                continue
+            if expense.finance_entry_id:
+                entry = db.session.get(FinanceEntry, expense.finance_entry_id)
+                if entry:
+                    db.session.delete(entry)
+            db.session.delete(expense)
+        return
+
+    assignments = ServiceAssignment.query.filter_by(service_id=service.id).all()
+    desired = {
+        a.employee_id: (a, max(Decimal("0"), Decimal(a.helper_value or 0)))
+        for a in assignments
+        if Decimal(a.helper_value or 0) > 0
+    }
+
+    by_employee = {}
+    for expense in auto_expenses:
+        if expense.employee_id not in by_employee:
+            by_employee[expense.employee_id] = expense
+        else:
+            # Remove duplicata automática antiga, se existir.
+            if expense.finance_entry_id:
+                entry = db.session.get(FinanceEntry, expense.finance_entry_id)
+                if entry:
+                    db.session.delete(entry)
+            db.session.delete(expense)
+
+    # Cria/atualiza uma pendência por ajudante atribuído.
+    for employee_id, (assignment, helper_value) in desired.items():
+        expense = by_employee.get(employee_id)
+        if expense is None:
+            expense = EmployeeExpense(
+                employee_id=employee_id,
+                service_id=service.id,
+                expense_date=service.service_date or local_today(),
+                category="payment",
+                amount=helper_value,
+                status="pending",
+                notes=AUTO_HELPER_SERVICE_NOTE,
+            )
+            db.session.add(expense)
+            db.session.flush()
+        else:
+            expense.expense_date = service.service_date or expense.expense_date or local_today()
+            expense.category = "payment"
+            expense.amount = helper_value
+            expense.notes = AUTO_HELPER_SERVICE_NOTE
+        sync_employee_expense_finance(expense)
+
+    # Se trocou/removeu o ajudante, apaga somente a pendência automática
+    # antiga que ainda não foi paga.
+    for employee_id, expense in by_employee.items():
+        if employee_id in desired or expense.status != "pending":
+            continue
+        if expense.finance_entry_id:
+            entry = db.session.get(FinanceEntry, expense.finance_entry_id)
+            if entry:
+                db.session.delete(entry)
+        db.session.delete(expense)
 
 
 @app.route("/team")
