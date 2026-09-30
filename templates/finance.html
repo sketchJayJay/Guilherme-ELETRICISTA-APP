@@ -35,8 +35,10 @@
   <div class="finance-summary-grid">
     <div class="finance-summary-card received"><small>{% if summary.is_current_month %}Recebido até hoje{% else %}Recebido{% endif %}</small><strong>{{ summary.received|money }}</strong><span>Entradas confirmadas{% if summary.is_current_month %} até {{ summary.today|datebr }}{% endif %}</span></div>
     <div class="finance-summary-card expense"><small>{% if summary.is_current_month %}Gastos até hoje{% else %}Gastos{% endif %}</small><strong>{{ summary.expenses|money }}</strong><span>Despesas pagas{% if summary.is_current_month %} até {{ summary.today|datebr }}{% endif %}</span></div>
-    <div class="finance-summary-card balance"><small>{% if summary.is_current_month %}Saldo parcial{% else %}Saldo do mês{% endif %}</small><strong>{{ summary.balance|money }}</strong><span>Recebido menos gastos</span></div>
-    <div class="finance-summary-card pending"><small>{% if summary.is_current_month %}A receber previsto{% else %}A receber{% endif %}</small><strong>{{ summary.receivable|money }}</strong><span>Pendências até {{ summary.month_end|datebr }}</span></div>
+    <div class="finance-summary-card balance"><small>{% if summary.is_current_month %}Saldo em caixa{% else %}Saldo realizado{% endif %}</small><strong>{{ summary.balance|money }}</strong><span>Recebido menos gastos já pagos</span></div>
+    <div class="finance-summary-card pending"><small>{% if summary.is_current_month %}A receber previsto{% else %}A receber{% endif %}</small><strong>{{ summary.receivable|money }}</strong><span>Entradas pendentes até {{ summary.month_end|datebr }}</span></div>
+    <div class="finance-summary-card payable"><small>{% if summary.is_current_month %}A pagar previsto{% else %}A pagar{% endif %}</small><strong>{{ summary.payable|money }}</strong><span>Despesas pendentes até {{ summary.month_end|datebr }}</span></div>
+    <div class="finance-summary-card forecast"><small>Saldo previsto</small><strong>{{ summary.forecast_balance|money }}</strong><span>Caixa + a receber − a pagar</span></div>
   </div>
 
   <div class="finance-breakdown-grid">
@@ -63,7 +65,9 @@
   <div class="stat"><div class="label">Recebido no período</div><div class="value">{{ paid_income|money }}</div></div>
   <div class="stat"><div class="label">A receber no período</div><div class="value">{{ pending_income|money }}</div></div>
   <div class="stat"><div class="label">Gastos pagos no período</div><div class="value">{{ paid_expense|money }}</div></div>
-  <div class="stat"><div class="label">Saldo do período</div><div class="value">{{ (paid_income-paid_expense)|money }}</div></div>
+  <div class="stat"><div class="label">A pagar no período</div><div class="value">{{ pending_expense|money }}</div></div>
+  <div class="stat"><div class="label">Saldo realizado</div><div class="value">{{ (paid_income-paid_expense)|money }}</div></div>
+  <div class="stat"><div class="label">Saldo previsto</div><div class="value">{{ (paid_income+pending_income-paid_expense-pending_expense)|money }}</div></div>
 </div>
 
 <div class="toolbar finance-filter-bar">

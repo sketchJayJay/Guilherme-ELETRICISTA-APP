@@ -7,6 +7,7 @@ import base64
 import uuid
 import json
 import threading
+import unicodedata
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from functools import wraps
@@ -2651,25 +2652,35 @@ def get_finance_month_summary(month_value=None):
         FinanceEntry.due_date < next_month,
     ).order_by(FinanceEntry.due_date.asc(), FinanceEntry.id.asc()).all()
 
+    pending_expense_entries = FinanceEntry.query.filter(
+        FinanceEntry.type == "expense",
+        FinanceEntry.status == "pending",
+        FinanceEntry.due_date >= month_start,
+        FinanceEntry.due_date < next_month,
+    ).order_by(FinanceEntry.due_date.asc(), FinanceEntry.id.asc()).all()
+
     income_entries = [x for x in paid_entries if x.type == "income"]
     expense_entries = [x for x in paid_entries if x.type == "expense"]
 
     received = sum((Decimal(x.amount or 0) for x in income_entries), Decimal("0"))
     expenses = sum((Decimal(x.amount or 0) for x in expense_entries), Decimal("0"))
     receivable = sum((Decimal(x.amount or 0) for x in pending_entries), Decimal("0"))
+    payable = sum((Decimal(x.amount or 0) for x in pending_expense_entries), Decimal("0"))
     balance = received - expenses
+    forecast_balance = balance + receivable - payable
 
-    expense_categories = {}
-    for entry in expense_entries:
-        category = (entry.category or "Outros").strip() or "Outros"
-        expense_categories[category] = expense_categories.get(category, Decimal("0")) + Decimal(entry.amount or 0)
-    expense_categories = sorted(expense_categories.items(), key=lambda item: item[1], reverse=True)
+    def grouped_categories(entries, default_label):
+        grouped = {}
+        labels = {}
+        for entry in entries:
+            label = unicodedata.normalize("NFKC", " ".join((entry.category or default_label).split())).strip() or default_label
+            key = label.casefold()
+            labels.setdefault(key, label)
+            grouped[key] = grouped.get(key, Decimal("0")) + Decimal(entry.amount or 0)
+        return sorted(((labels[key], amount) for key, amount in grouped.items()), key=lambda item: item[1], reverse=True)
 
-    income_categories = {}
-    for entry in income_entries:
-        category = (entry.category or "Serviços / Outros").strip() or "Serviços / Outros"
-        income_categories[category] = income_categories.get(category, Decimal("0")) + Decimal(entry.amount or 0)
-    income_categories = sorted(income_categories.items(), key=lambda item: item[1], reverse=True)
+    expense_categories = grouped_categories(expense_entries, "Outros")
+    income_categories = grouped_categories(income_entries, "Serviços / Outros")
 
     return {
         "month_start": month_start,
@@ -2684,9 +2695,12 @@ def get_finance_month_summary(month_value=None):
         "expenses": expenses,
         "balance": balance,
         "receivable": receivable,
+        "payable": payable,
+        "forecast_balance": forecast_balance,
         "income_entries": income_entries,
         "expense_entries": expense_entries,
         "pending_entries": pending_entries,
+        "pending_expense_entries": pending_expense_entries,
         "expense_categories": expense_categories,
         "income_categories": income_categories,
     }
@@ -2754,7 +2768,27 @@ def build_finance_month_pdf(summary):
         ("TOPPADDING", (0, 0), (-1, -1), 7),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
     ]))
-    story.extend([metrics_table, Spacer(1, 6 * mm)])
+    story.extend([metrics_table, Spacer(1, 3 * mm)])
+
+    forecast_metrics = [
+        ["A pagar", "Saldo previsto"],
+        [money(summary["payable"]), money(summary["forecast_balance"])],
+    ]
+    forecast_table = Table(forecast_metrics, colWidths=[90 * mm, 90 * mm])
+    forecast_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8.5),
+        ("FONTSIZE", (0, 1), (-1, 1), 12),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("GRID", (0, 0), (-1, -1), .5, colors.HexColor("#CBD5E1")),
+        ("BACKGROUND", (0, 1), (0, 1), colors.HexColor("#FFF7ED")),
+        ("BACKGROUND", (1, 1), (1, 1), colors.HexColor("#F0FDF4")),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    story.extend([forecast_table, Spacer(1, 6 * mm)])
 
     story.append(Paragraph("Gastos por categoria", styles["FinSection"]))
     cat_data = [["Categoria", "Valor", "% dos gastos"]]
@@ -2830,6 +2864,28 @@ def build_finance_month_pdf(summary):
         ]))
         story.append(pending_table)
 
+    if summary["pending_expense_entries"]:
+        story.extend([Spacer(1, 4 * mm), Paragraph("Valores a pagar", styles["FinSection"])])
+        payable_data = [["Vencimento", "Descrição", "Categoria", "Valor"]]
+        for entry in summary["pending_expense_entries"]:
+            payable_data.append([
+                entry.due_date.strftime("%d/%m/%Y"),
+                Paragraph(xml_escape(entry.description or "A pagar"), styles["FinBody"]),
+                Paragraph(xml_escape(unicodedata.normalize("NFKC", " ".join((entry.category or "Outros").split()))), styles["FinBody"]),
+                money(entry.amount),
+            ])
+        payable_table = Table(payable_data, colWidths=[30 * mm, 83 * mm, 42 * mm, 25 * mm], repeatRows=1)
+        payable_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FFEDD5")),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ALIGN", (-1, 0), (-1, -1), "RIGHT"),
+            ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#D6D3D1")),
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        story.append(payable_table)
+
     if settings.footer_text:
         story.extend([Spacer(1, 8 * mm), Paragraph(xml_escape(str(settings.footer_text)), styles["FinSmall"])])
     doc.build(story)
@@ -2857,6 +2913,7 @@ def finance():
     paid_income = sum((Decimal(x.amount or 0) for x in entries if x.type == "income" and x.status == "paid"), Decimal("0"))
     pending_income = sum((Decimal(x.amount or 0) for x in entries if x.type == "income" and x.status == "pending"), Decimal("0"))
     paid_expense = sum((Decimal(x.amount or 0) for x in entries if x.type == "expense" and x.status == "paid"), Decimal("0"))
+    pending_expense = sum((Decimal(x.amount or 0) for x in entries if x.type == "expense" and x.status == "pending"), Decimal("0"))
     summary = get_finance_month_summary(request.args.get("month"))
     return render_template(
         "finance.html",
@@ -2868,6 +2925,7 @@ def finance():
         paid_income=paid_income,
         pending_income=pending_income,
         paid_expense=paid_expense,
+        pending_expense=pending_expense,
         summary=summary,
     )
 
