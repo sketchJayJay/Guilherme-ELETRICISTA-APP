@@ -186,7 +186,8 @@
         <form method="post" action="{{ url_for('service_assign_helper', service_id=service.id) }}" class="form-grid" style="margin-bottom:16px">
           <div class="field"><label>Ajudante</label><select class="select" name="employee_id" required><option value="">Selecione...</option>{% for e in employees %}<option value="{{ e.id }}" {% if assignments and assignments[0].employee_id==e.id %}selected{% endif %}>{{ e.name }}</option>{% endfor %}</select></div>
           <div class="field"><label>Valor dele neste serviço</label><input class="input" name="helper_value" inputmode="decimal" value="{{ assignments[0].helper_value if assignments else '' }}" placeholder="Ex.: 150,00"></div>
-          <div class="field full"><button class="btn primary" type="submit">📲 Enviar serviço para o ajudante</button><div class="help">Ao clicar, o serviço aparece no celular dele e o sistema tenta enviar a notificação push.</div></div>
+          <div class="field"><label>Situação do pagamento</label><select class="select" name="helper_payment_status"><option value="paid" {% if assignments and assignments[0].helper_payment_status=='paid' %}selected{% elif not assignments and service.status=='completed' %}selected{% endif %}>Já paguei</option><option value="pending" {% if assignments and assignments[0].helper_payment_status!='paid' %}selected{% elif not assignments and service.status!='completed' %}selected{% endif %}>Ainda vou pagar</option></select></div>
+          <div class="field full"><button class="btn primary" type="submit">📲 Salvar / enviar para o ajudante</button><div class="help">O valor é sincronizado com o Financeiro: pago entra em Gastos; pendente entra em A pagar.</div></div>
         </form>
         {% else %}
         <div class="empty" style="margin-bottom:14px">Cadastre um ajudante em <a href="{{ url_for('employee_new') }}">Equipe / Ajudante</a> para poder enviar serviços.</div>
@@ -196,7 +197,7 @@
           <div class="service-row">
             <div>
               <div class="row-title">🧰 {{ a.employee.name }}</div>
-              <div class="row-sub">Valor dele neste serviço: {{ a.helper_value|money }}</div>
+              <div class="row-sub">Valor dele neste serviço: {{ a.helper_value|money }} · <span class="badge {{ a.helper_payment_status }}">{{ 'Pago' if a.helper_payment_status=='paid' else 'A pagar' }}</span></div>
             </div>
             <div class="actions">
               {% if a.employee.phone %}

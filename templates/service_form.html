@@ -90,6 +90,15 @@
             <div class="help">Esse é o único valor do serviço que o ajudante consegue enxergar. O valor cobrado do cliente continua privado.</div>
           </div>
 
+          <div class="field full" id="helperPaymentStatusField">
+            <label>Situação do pagamento do ajudante</label>
+            <select class="select" name="helper_payment_status">
+              <option value="paid" {% if assigned_employee_payment_status=='paid' %}selected{% endif %}>Já paguei o ajudante</option>
+              <option value="pending" {% if assigned_employee_payment_status!='paid' %}selected{% endif %}>Ainda vou pagar</option>
+            </select>
+            <div class="help">Se marcar “Já paguei”, o valor entra em Gastos no Financeiro. Se marcar “Ainda vou pagar”, entra em A pagar.</div>
+          </div>
+
           <div class="field">
             <label>Organização do horário</label>
             <select class="select" name="all_day" id="allDay" onchange="toggleTime()">

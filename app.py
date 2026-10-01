@@ -307,6 +307,7 @@ class ServiceAssignment(db.Model):
     service_id = db.Column(db.Integer, db.ForeignKey("service.id"), nullable=False, index=True)
     employee_id = db.Column(db.Integer, db.ForeignKey("employee.id"), nullable=False, index=True)
     helper_value = db.Column(db.Numeric(12, 2), default=0)
+    helper_payment_status = db.Column(db.String(20), default="pending")  # pending/paid
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint("service_id", "employee_id", name="uq_service_employee"),)
     service = db.relationship("Service")
@@ -768,6 +769,20 @@ def migrate_schema():
         if "helper_value" not in assignment_cols:
             with db.engine.begin() as conn:
                 conn.execute(sql_text("ALTER TABLE service_assignment ADD COLUMN helper_value NUMERIC(12,2) DEFAULT 0"))
+        if "helper_payment_status" not in assignment_cols:
+            with db.engine.begin() as conn:
+                conn.execute(sql_text("ALTER TABLE service_assignment ADD COLUMN helper_payment_status VARCHAR(20) DEFAULT 'pending'"))
+                # Nos dados antigos, o Guilherme vinha usando o valor do ajudante
+                # como custo efetivamente pago quando o serviço já estava concluído.
+                # Mantemos esse comportamento ao migrar para que o financeiro
+                # histórico passe a fechar sem exigir relançamento manual.
+                conn.execute(sql_text("""
+                    UPDATE service_assignment
+                    SET helper_payment_status = CASE
+                        WHEN service_id IN (SELECT id FROM service WHERE status = 'completed') THEN 'paid'
+                        ELSE 'pending'
+                    END
+                """))
 
 
 _scheduler = None
@@ -910,6 +925,11 @@ def sync_service_total(service):
 AUTO_SERVICE_PAYMENT_NOTE = "__AUTO_SERVICE_PAYMENT__"
 AUTO_SERVICE_RECEIVABLE_NOTE = "__AUTO_SERVICE_RECEIVABLE__"
 AUTO_HELPER_SERVICE_NOTE = "__AUTO_HELPER_SERVICE__"
+
+
+def normalize_helper_payment_status(value, default="pending"):
+    value = (value or "").strip().lower()
+    return value if value in {"pending", "paid"} else default
 
 
 def ensure_income_entry(service, payment_date=None):
@@ -1381,6 +1401,7 @@ def service_new():
                 selected_client=client_id, selected_date=parse_date(request.form.get("service_date"), selected_date),
                 assigned_employee_id=request.form.get("employee_id", type=int),
                 assigned_employee_value=decimal_or_zero(request.form.get("helper_value")),
+                assigned_employee_payment_status=normalize_helper_payment_status(request.form.get("helper_payment_status"), "pending"),
                 quick_client_name=quick_client_name, quick_client_phone=quick_client_phone,
                 busy_dates=busy_dates,
             )
@@ -1410,6 +1431,7 @@ def service_new():
                 selected_client=client.id if client else client_id, selected_date=parse_date(request.form.get("service_date"), selected_date),
                 assigned_employee_id=request.form.get("employee_id", type=int),
                 assigned_employee_value=decimal_or_zero(request.form.get("helper_value")),
+                assigned_employee_payment_status=normalize_helper_payment_status(request.form.get("helper_payment_status"), "pending"),
                 quick_client_name=quick_client_name, quick_client_phone=quick_client_phone,
                 busy_dates=busy_dates,
             )
@@ -1421,10 +1443,15 @@ def service_new():
         employee = db.session.get(Employee, employee_id) if employee_id else None
         assignment = None
         if employee and employee.active:
+            helper_payment_status = normalize_helper_payment_status(
+                request.form.get("helper_payment_status"),
+                "paid" if service.status == "completed" else "pending",
+            )
             assignment = ServiceAssignment(
                 service_id=service.id,
                 employee_id=employee.id,
                 helper_value=decimal_or_zero(request.form.get("helper_value")),
+                helper_payment_status=helper_payment_status,
             )
             db.session.add(assignment)
         db.session.flush()
@@ -1450,6 +1477,7 @@ def service_new():
         "service_form.html", service=None, clients=clients_list, employees=employees_list,
         selected_client=selected_client, selected_client_obj=selected_client_obj, selected_date=selected_date,
         assigned_employee_id=None, assigned_employee_value=Decimal("0"),
+        assigned_employee_payment_status="pending",
         quick_client_name=(selected_client_obj.name if selected_client_obj else ""),
         quick_client_phone=(selected_client_obj.phone if selected_client_obj else ""),
         busy_dates=busy_dates,
@@ -1502,6 +1530,7 @@ def service_edit(service_id):
                 selected_client=None, selected_date=service.service_date,
                 assigned_employee_id=current_assignment.employee_id if current_assignment else None,
                 assigned_employee_value=current_assignment.helper_value if current_assignment else Decimal("0"),
+                assigned_employee_payment_status=(current_assignment.helper_payment_status if current_assignment else "pending"),
                 busy_dates=busy_dates,
             )
 
@@ -1538,10 +1567,15 @@ def service_edit(service_id):
         employee = db.session.get(Employee, employee_id) if employee_id else None
         new_assignment = None
         if employee and employee.active:
+            helper_payment_status = normalize_helper_payment_status(
+                request.form.get("helper_payment_status"),
+                current_assignment.helper_payment_status if current_assignment else ("paid" if service.status == "completed" else "pending"),
+            )
             new_assignment = ServiceAssignment(
                 service_id=service.id,
                 employee_id=employee.id,
                 helper_value=decimal_or_zero(request.form.get("helper_value")),
+                helper_payment_status=helper_payment_status,
             )
             db.session.add(new_assignment)
         db.session.flush()
@@ -1582,6 +1616,7 @@ def service_edit(service_id):
         selected_client=service.client_id, selected_date=service.service_date,
         assigned_employee_id=current_assignment.employee_id if current_assignment else None,
         assigned_employee_value=current_assignment.helper_value if current_assignment else Decimal("0"),
+        assigned_employee_payment_status=(current_assignment.helper_payment_status if current_assignment else "pending"),
         busy_dates=busy_dates,
     )
 
@@ -1623,11 +1658,19 @@ def service_assign_helper(service_id):
         return redirect(url_for("service_detail", service_id=service.id) + "#enviar-ajudante")
 
     helper_value = decimal_or_zero(request.form.get("helper_value"))
+    helper_payment_status = normalize_helper_payment_status(
+        request.form.get("helper_payment_status"),
+        "paid" if service.status == "completed" else "pending",
+    )
     assignment = ServiceAssignment.query.filter_by(service_id=service.id, employee_id=employee.id).first()
     if assignment:
         assignment.helper_value = helper_value
+        assignment.helper_payment_status = helper_payment_status
     else:
-        assignment = ServiceAssignment(service_id=service.id, employee_id=employee.id, helper_value=helper_value)
+        assignment = ServiceAssignment(
+            service_id=service.id, employee_id=employee.id, helper_value=helper_value,
+            helper_payment_status=helper_payment_status,
+        )
         db.session.add(assignment)
 
     try:
@@ -2399,6 +2442,7 @@ def quote_convert(quote_id):
         assignment = ServiceAssignment(
             service_id=service.id, employee_id=employee.id,
             helper_value=decimal_or_zero(request.form.get("helper_value")),
+            helper_payment_status="pending",
         )
         db.session.add(assignment)
 
@@ -3044,6 +3088,12 @@ def finance_toggle(entry_id):
     team_expense = EmployeeExpense.query.filter_by(finance_entry_id=entry.id).first()
     if team_expense:
         team_expense.status = entry.status
+        if team_expense.notes == AUTO_HELPER_SERVICE_NOTE and team_expense.service_id:
+            assignment = ServiceAssignment.query.filter_by(
+                service_id=team_expense.service_id, employee_id=team_expense.employee_id
+            ).first()
+            if assignment:
+                assignment.helper_payment_status = entry.status
     db.session.commit()
     flash("Situação financeira atualizada.", "success")
     return redirect(request.referrer or url_for("finance"))
@@ -3202,10 +3252,14 @@ def sync_employee_expense_finance(expense):
     entry.due_date = expense.expense_date
     entry.status = expense.status
     if expense.status == "paid":
-        # Para pagamento automático do ajudante, preserva a data real da baixa.
-        # Nos lançamentos manuais antigos, mantém a data informada no gasto.
+        # Para valores de ajudante ligados ao serviço, usa a data do serviço
+        # quando ela já passou. Assim os históricos antigos entram no mês
+        # correto em vez de cair todos no mês do redeploy. Para serviço futuro,
+        # registra a baixa na data de hoje.
         if expense.notes == AUTO_HELPER_SERVICE_NOTE:
-            entry.paid_date = entry.paid_date or local_today()
+            historical_date = expense.expense_date or local_today()
+            paid_on = historical_date if historical_date <= local_today() else local_today()
+            entry.paid_date = entry.paid_date or paid_on
         else:
             entry.paid_date = expense.expense_date
     else:
@@ -3213,11 +3267,14 @@ def sync_employee_expense_finance(expense):
 
 
 def sync_service_helper_expenses(service):
-    """Sincroniza o valor combinado com ajudantes de um serviço concluído.
+    """Mantém o valor do ajudante 100% sincronizado com o Financeiro.
 
-    O valor do ajudante nasce como pendente (A pagar). A despesa só entra no
-    saldo mensal depois que o proprietário der baixa. A rotina é idempotente:
-    pode rodar em todo redeploy sem duplicar lançamentos.
+    Assim que existe um ajudante com valor definido, o financeiro recebe um
+    lançamento ligado ao serviço. O status vem da própria atribuição:
+    ``paid`` entra em Gastos; ``pending`` entra em A pagar. Isso evita o caso
+    em que o valor aparece no serviço/lucro, mas some do Financeiro.
+
+    A rotina é idempotente e pode rodar em todo redeploy sem duplicar.
     """
     if not service or not service.id:
         return
@@ -3226,25 +3283,21 @@ def sync_service_helper_expenses(service):
         service_id=service.id, notes=AUTO_HELPER_SERVICE_NOTE
     ).order_by(EmployeeExpense.id.asc()).all()
 
-    # Se o serviço deixou de estar concluído, desfaz somente pendências
-    # automáticas. Pagamentos já baixados permanecem como histórico.
-    if service.status != "completed":
-        for expense in auto_expenses:
-            if expense.status != "pending":
-                continue
-            if expense.finance_entry_id:
-                entry = db.session.get(FinanceEntry, expense.finance_entry_id)
-                if entry:
-                    db.session.delete(entry)
-            db.session.delete(expense)
-        return
-
     assignments = ServiceAssignment.query.filter_by(service_id=service.id).all()
-    desired = {
-        a.employee_id: (a, max(Decimal("0"), Decimal(a.helper_value or 0)))
-        for a in assignments
-        if Decimal(a.helper_value or 0) > 0
-    }
+    desired = {}
+    for assignment in assignments:
+        helper_value = max(Decimal("0"), Decimal(assignment.helper_value or 0))
+        if helper_value <= 0:
+            continue
+        # Instalações antigas podem ter valor nulo até a migração/redeploy.
+        # Serviço concluído segue o comportamento esperado pelo Guilherme:
+        # custo pago. Serviços ainda em aberto ficam previstos como A pagar.
+        fallback = "paid" if service.status == "completed" else "pending"
+        payment_status = normalize_helper_payment_status(
+            getattr(assignment, "helper_payment_status", None), fallback
+        )
+        assignment.helper_payment_status = payment_status
+        desired[assignment.employee_id] = (assignment, helper_value, payment_status)
 
     by_employee = {}
     for expense in auto_expenses:
@@ -3258,8 +3311,8 @@ def sync_service_helper_expenses(service):
                     db.session.delete(entry)
             db.session.delete(expense)
 
-    # Cria/atualiza uma pendência por ajudante atribuído.
-    for employee_id, (assignment, helper_value) in desired.items():
+    # Cria/atualiza exatamente um lançamento por ajudante atribuído.
+    for employee_id, (assignment, helper_value, payment_status) in desired.items():
         expense = by_employee.get(employee_id)
         if expense is None:
             expense = EmployeeExpense(
@@ -3268,7 +3321,7 @@ def sync_service_helper_expenses(service):
                 expense_date=service.service_date or local_today(),
                 category="payment",
                 amount=helper_value,
-                status="pending",
+                status=payment_status,
                 notes=AUTO_HELPER_SERVICE_NOTE,
             )
             db.session.add(expense)
@@ -3277,11 +3330,12 @@ def sync_service_helper_expenses(service):
             expense.expense_date = service.service_date or expense.expense_date or local_today()
             expense.category = "payment"
             expense.amount = helper_value
+            expense.status = payment_status
             expense.notes = AUTO_HELPER_SERVICE_NOTE
         sync_employee_expense_finance(expense)
 
-    # Se trocou/removeu o ajudante, apaga somente a pendência automática
-    # antiga que ainda não foi paga.
+    # Se trocou/removeu o ajudante, apaga apenas o lançamento automático que
+    # ainda está pendente. Valor já pago permanece como histórico.
     for employee_id, expense in by_employee.items():
         if employee_id in desired or expense.status != "pending":
             continue
@@ -3586,6 +3640,12 @@ def employee_expense_new(employee_id):
 def employee_expense_toggle(expense_id):
     expense = EmployeeExpense.query.get_or_404(expense_id)
     expense.status = "paid" if expense.status == "pending" else "pending"
+    if expense.notes == AUTO_HELPER_SERVICE_NOTE and expense.service_id:
+        assignment = ServiceAssignment.query.filter_by(
+            service_id=expense.service_id, employee_id=expense.employee_id
+        ).first()
+        if assignment:
+            assignment.helper_payment_status = expense.status
     sync_employee_expense_finance(expense)
     db.session.commit()
     flash("Situação do gasto atualizada.", "success")
