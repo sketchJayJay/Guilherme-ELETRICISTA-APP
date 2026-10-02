@@ -19,7 +19,7 @@ from flask import (
     session, send_file, send_from_directory, jsonify, abort
 )
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import func, or_, and_, text as sql_text, inspect as sa_inspect
+from sqlalchemy import func, or_, text as sql_text, inspect as sa_inspect
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -201,8 +201,6 @@ class QuoteItem(db.Model):
 class FinanceEntry(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     type = db.Column(db.String(20), nullable=False, index=True)  # income/expense
-    source_type = db.Column(db.String(30), default="manual", index=True)  # manual/service/helper
-    source_key = db.Column(db.String(120), default="", index=True)
     client_id = db.Column(db.Integer, db.ForeignKey("client.id"), nullable=True, index=True)
     service_id = db.Column(db.Integer, db.ForeignKey("service.id"), nullable=True, index=True)
     description = db.Column(db.String(255), nullable=False)
@@ -310,7 +308,6 @@ class ServiceAssignment(db.Model):
     employee_id = db.Column(db.Integer, db.ForeignKey("employee.id"), nullable=False, index=True)
     helper_value = db.Column(db.Numeric(12, 2), default=0)
     helper_payment_status = db.Column(db.String(20), default="pending")  # pending/paid
-    helper_paid_date = db.Column(db.Date, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint("service_id", "employee_id", name="uq_service_employee"),)
     service = db.relationship("Service")
@@ -339,7 +336,6 @@ class EmployeeExpense(db.Model):
     employee_id = db.Column(db.Integer, db.ForeignKey("employee.id"), nullable=False, index=True)
     service_id = db.Column(db.Integer, db.ForeignKey("service.id"), nullable=True, index=True)
     expense_date = db.Column(db.Date, nullable=False, default=date.today, index=True)
-    paid_date = db.Column(db.Date, nullable=True, index=True)
     category = db.Column(db.String(40), default="daily")  # daily/meal/fuel/advance/payment/other
     amount = db.Column(db.Numeric(12, 2), nullable=False, default=0)
     status = db.Column(db.String(20), default="paid", index=True)  # pending/paid
@@ -768,50 +764,24 @@ def migrate_schema():
                 if name not in quote_cols:
                     conn.execute(sql_text(f"ALTER TABLE quote ADD COLUMN {name} {ddl}"))
 
-    if "finance_entry" in table_names:
-        finance_cols = {c["name"] for c in inspector.get_columns("finance_entry")}
-        with db.engine.begin() as conn:
-            if "source_type" not in finance_cols:
-                conn.execute(sql_text("ALTER TABLE finance_entry ADD COLUMN source_type VARCHAR(30) DEFAULT 'manual'"))
-            if "source_key" not in finance_cols:
-                conn.execute(sql_text("ALTER TABLE finance_entry ADD COLUMN source_key VARCHAR(120) DEFAULT ''"))
-
     if "service_assignment" in table_names:
         assignment_cols = {c["name"] for c in inspector.get_columns("service_assignment")}
-        with db.engine.begin() as conn:
-            if "helper_value" not in assignment_cols:
+        if "helper_value" not in assignment_cols:
+            with db.engine.begin() as conn:
                 conn.execute(sql_text("ALTER TABLE service_assignment ADD COLUMN helper_value NUMERIC(12,2) DEFAULT 0"))
-            if "helper_payment_status" not in assignment_cols:
+        if "helper_payment_status" not in assignment_cols:
+            with db.engine.begin() as conn:
                 conn.execute(sql_text("ALTER TABLE service_assignment ADD COLUMN helper_payment_status VARCHAR(20) DEFAULT 'pending'"))
-                # Compatibilidade com instalações bem antigas, anteriores ao campo
-                # de situação do pagamento do ajudante.
+                # Nos dados antigos, o Guilherme vinha usando o valor do ajudante
+                # como custo efetivamente pago quando o serviço já estava concluído.
+                # Mantemos esse comportamento ao migrar para que o financeiro
+                # histórico passe a fechar sem exigir relançamento manual.
                 conn.execute(sql_text("""
                     UPDATE service_assignment
                     SET helper_payment_status = CASE
                         WHEN service_id IN (SELECT id FROM service WHERE status = 'completed') THEN 'paid'
                         ELSE 'pending'
                     END
-                """))
-            if "helper_paid_date" not in assignment_cols:
-                conn.execute(sql_text("ALTER TABLE service_assignment ADD COLUMN helper_paid_date DATE"))
-                conn.execute(sql_text("""
-                    UPDATE service_assignment
-                    SET helper_paid_date = (
-                        SELECT service.service_date FROM service
-                        WHERE service.id = service_assignment.service_id
-                    )
-                    WHERE helper_payment_status = 'paid'
-                """))
-
-    if "employee_expense" in table_names:
-        expense_cols = {c["name"] for c in inspector.get_columns("employee_expense")}
-        if "paid_date" not in expense_cols:
-            with db.engine.begin() as conn:
-                conn.execute(sql_text("ALTER TABLE employee_expense ADD COLUMN paid_date DATE"))
-                conn.execute(sql_text("""
-                    UPDATE employee_expense
-                    SET paid_date = expense_date
-                    WHERE status = 'paid'
                 """))
 
 
@@ -963,13 +933,7 @@ def normalize_helper_payment_status(value, default="pending"):
 
 
 def ensure_income_entry(service, payment_date=None):
-    """Espelha o recebimento do serviço no livro-caixa.
-
-    ``Service.amount_paid`` continua sendo a fonte do valor recebido no serviço,
-    enquanto ``FinanceEntry`` guarda as movimentações que aparecem no Financeiro.
-    A função é idempotente: pode rodar quantas vezes for necessário sem criar
-    uma nova pendência a cada abertura da tela.
-    """
+    """Sincroniza o financeiro do serviço sem perder recebimentos parciais."""
     total = max(Decimal("0"), Decimal(service.total_value or 0))
     target_paid = min(total, max(Decimal("0"), Decimal(service.amount_paid or 0)))
     service.amount_paid = target_paid
@@ -984,23 +948,19 @@ def ensure_income_entry(service, payment_date=None):
     entries = FinanceEntry.query.filter_by(service_id=service.id, type="income").order_by(FinanceEntry.id.asc()).all()
     legacy_entries = [e for e in entries if e.notes not in {AUTO_SERVICE_PAYMENT_NOTE, AUTO_SERVICE_RECEIVABLE_NOTE}]
 
-    # Lançamentos antigos ligados ao serviço viram a representação automática.
-    # Preserva a melhor data conhecida para não deslocar histórico de caixa.
     if legacy_entries:
         old_paid_date = next((e.paid_date or e.due_date for e in legacy_entries if e.status == "paid"), None)
         for e in legacy_entries:
             db.session.delete(e)
         db.session.flush()
         if target_paid > 0:
-            paid_on = old_paid_date or payment_date or service.service_date or local_today()
-            entry = FinanceEntry(
+            paid_on = old_paid_date or payment_date or local_today()
+            db.session.add(FinanceEntry(
                 type="income", client_id=service.client_id, service_id=service.id,
                 description=f"Recebimento serviço #{service.id} - {service.title}",
-                category="Serviços", amount=target_paid, due_date=service.service_date or paid_on,
-                paid_date=paid_on, status="paid", payment_method=service.payment_method or "",
-                notes=AUTO_SERVICE_PAYMENT_NOTE, source_type="service", source_key=f"service:{service.id}:payment",
-            )
-            db.session.add(entry)
+                category="Serviços", amount=target_paid, due_date=paid_on, paid_date=paid_on,
+                status="paid", payment_method=service.payment_method or "", notes=AUTO_SERVICE_PAYMENT_NOTE,
+            ))
         current_paid = target_paid
     else:
         paid_entries = [e for e in entries if e.notes == AUTO_SERVICE_PAYMENT_NOTE and e.status == "paid"]
@@ -1008,14 +968,12 @@ def ensure_income_entry(service, payment_date=None):
         if target_paid > current_paid:
             difference = target_paid - current_paid
             paid_on = payment_date or local_today()
-            entry = FinanceEntry(
+            db.session.add(FinanceEntry(
                 type="income", client_id=service.client_id, service_id=service.id,
                 description=f"Recebimento serviço #{service.id} - {service.title}",
-                category="Serviços", amount=difference, due_date=service.service_date or paid_on,
-                paid_date=paid_on, status="paid", payment_method=service.payment_method or "",
-                notes=AUTO_SERVICE_PAYMENT_NOTE, source_type="service", source_key=f"service:{service.id}:payment",
-            )
-            db.session.add(entry)
+                category="Serviços", amount=difference, due_date=paid_on, paid_date=paid_on,
+                status="paid", payment_method=service.payment_method or "", notes=AUTO_SERVICE_PAYMENT_NOTE,
+            ))
         elif target_paid < current_paid:
             reduction = current_paid - target_paid
             for e in sorted(paid_entries, key=lambda x: x.id or 0, reverse=True):
@@ -1031,27 +989,15 @@ def ensure_income_entry(service, payment_date=None):
 
     db.session.flush()
 
-    paid_entries = FinanceEntry.query.filter_by(service_id=service.id, type="income").filter(
-        FinanceEntry.notes == AUTO_SERVICE_PAYMENT_NOTE
-    ).all()
-    for e in paid_entries:
+    for e in FinanceEntry.query.filter_by(service_id=service.id, type="income").filter(FinanceEntry.notes == AUTO_SERVICE_PAYMENT_NOTE).all():
         e.client_id = service.client_id
         e.description = f"Recebimento serviço #{service.id} - {service.title}"
         e.category = "Serviços"
-        e.source_type = "service"
-        e.source_key = f"service:{service.id}:payment"
-        e.status = "paid"
-        e.paid_date = e.paid_date or e.due_date or service.service_date or local_today()
-        # A data de vencimento representa o serviço; a data de caixa fica em paid_date.
-        e.due_date = service.service_date or e.due_date or e.paid_date
         if service.payment_method:
             e.payment_method = service.payment_method
 
-    # Serviço cancelado não deve continuar aparecendo como cobrança futura.
-    remaining = Decimal("0") if service.status == "cancelled" else max(Decimal("0"), total - target_paid)
-    pending_entries = FinanceEntry.query.filter_by(service_id=service.id, type="income").filter(
-        FinanceEntry.notes == AUTO_SERVICE_RECEIVABLE_NOTE
-    ).order_by(FinanceEntry.id.asc()).all()
+    remaining = max(Decimal("0"), total - target_paid)
+    pending_entries = FinanceEntry.query.filter_by(service_id=service.id, type="income").filter(FinanceEntry.notes == AUTO_SERVICE_RECEIVABLE_NOTE).order_by(FinanceEntry.id.asc()).all()
     pending = pending_entries[0] if pending_entries else None
     for extra in pending_entries[1:]:
         db.session.delete(extra)
@@ -1064,12 +1010,10 @@ def ensure_income_entry(service, payment_date=None):
         pending.description = f"A receber serviço #{service.id} - {service.title}"
         pending.category = "Serviços"
         pending.amount = remaining
-        pending.due_date = service.service_date or local_today()
+        pending.due_date = service.service_date
         pending.paid_date = None
         pending.status = "pending"
         pending.payment_method = service.payment_method or ""
-        pending.source_type = "service"
-        pending.source_key = f"service:{service.id}:receivable"
     elif pending is not None:
         db.session.delete(pending)
 
@@ -1080,37 +1024,41 @@ def repair_service_income_entries():
 
 
 def repair_financial_history():
-    """Reconcilia o livro-caixa com serviços e equipe.
-
-    Pode rodar no startup e sempre que o Financeiro é aberto. A rotina é
-    idempotente e evita a necessidade de relançar valores manualmente.
-    """
+    """Reconcilia histórico financeiro antigo sem duplicar lançamentos."""
     repaired_services = 0
     repaired_expenses = 0
     repaired_dates = 0
 
+    # Serviços antigos: transforma amount_paid salvo no serviço em entradas pagas
+    # e deixa somente o saldo restante como A receber.
     for service in Service.query.order_by(Service.id.asc()).all():
+        total = Decimal(service.total_value or 0)
+        paid = Decimal(service.amount_paid or 0)
         linked_entries = FinanceEntry.query.filter_by(service_id=service.id, type="income").all()
+        if total <= 0 and paid <= 0 and not linked_entries:
+            # Mesmo serviço sem valor de cliente pode ter valor de ajudante salvo.
+            sync_service_helper_expenses(service)
+            continue
+
         existing_paid_date = next(
             (e.paid_date or e.due_date for e in linked_entries if e.status == "paid" and Decimal(e.amount or 0) > 0),
             None,
         )
+        # Em dados antigos sem data de recebimento registrada, usa a data do serviço
+        # para não jogar todos os valores no mês do redeploy.
         historical_payment_date = existing_paid_date or service.service_date or local_today()
         ensure_income_entry(service, payment_date=historical_payment_date)
+        # Também recupera valores de ajudantes que já estavam salvos em
+        # serviços concluídos, mas nunca tinham virado lançamento financeiro.
         sync_service_helper_expenses(service)
         repaired_services += 1
 
     db.session.flush()
 
+    # Gastos antigos da equipe: religa ao Financeiro e evita criar duplicata quando
+    # já existe uma saída equivalente, mas o finance_entry_id ficou perdido.
     for expense in EmployeeExpense.query.order_by(EmployeeExpense.id.asc()).all():
         linked = db.session.get(FinanceEntry, expense.finance_entry_id) if expense.finance_entry_id else None
-        source_key = f"employee_expense:{expense.id}"
-        if linked is None:
-            linked = FinanceEntry.query.filter_by(type="expense", source_key=source_key).order_by(FinanceEntry.id.asc()).first()
-            if linked:
-                expense.finance_entry_id = linked.id
-
-        # Compatibilidade com versões anteriores a source_key.
         if linked is None:
             employee_name = expense.employee.name if expense.employee else ""
             candidates = FinanceEntry.query.filter(
@@ -1118,45 +1066,22 @@ def repair_financial_history():
                 FinanceEntry.category == "Equipe / Ajudante",
                 FinanceEntry.due_date == expense.expense_date,
                 FinanceEntry.amount == expense.amount,
-            ).order_by(FinanceEntry.id.asc()).all()
-            expected_prefix = f"Equipe - {employee_name}:".casefold() if employee_name else "equipe -"
+            ).all()
             for candidate in candidates:
-                if not (candidate.description or "").casefold().startswith(expected_prefix):
-                    continue
                 if expense.service_id is not None and candidate.service_id not in (None, expense.service_id):
                     continue
+                if employee_name and employee_name.lower() not in (candidate.description or "").lower():
+                    continue
                 expense.finance_entry_id = candidate.id
-                linked = candidate
                 break
-
-        if expense.status == "paid" and not expense.paid_date and linked and linked.paid_date:
-            expense.paid_date = linked.paid_date
         sync_employee_expense_finance(expense)
         repaired_expenses += 1
 
-    # Datas faltantes não podem deixar dinheiro pago fora do caixa mensal.
+    # Baixas antigas marcadas como pagas mas sem data não entram nos totais mensais.
+    # Corrige usando a própria data de vencimento/lançamento.
     for entry in FinanceEntry.query.filter(FinanceEntry.status == "paid", FinanceEntry.paid_date.is_(None)).all():
         entry.paid_date = entry.due_date or local_today()
         repaired_dates += 1
-
-    # Identifica a origem dos lançamentos antigos para a tela ficar auditável.
-    helper_ids = {
-        x.finance_entry_id for x in EmployeeExpense.query.filter(EmployeeExpense.finance_entry_id.isnot(None)).all()
-    }
-    for entry in FinanceEntry.query.all():
-        if entry.id in helper_ids:
-            entry.source_type = "helper"
-            if not entry.source_key:
-                expense = EmployeeExpense.query.filter_by(finance_entry_id=entry.id).first()
-                if expense:
-                    entry.source_key = f"employee_expense:{expense.id}"
-        elif entry.service_id and entry.type == "income":
-            entry.source_type = "service"
-            if not entry.source_key:
-                suffix = "receivable" if entry.status == "pending" else "payment"
-                entry.source_key = f"service:{entry.service_id}:{suffix}"
-        elif not entry.source_type:
-            entry.source_type = "manual"
 
     db.session.commit()
     app.logger.info(
@@ -1237,9 +1162,7 @@ def get_busy_service_dates(exclude_service_id=None):
 @app.route("/")
 @login_required
 def dashboard():
-    # Mantém os cards da tela inicial usando exatamente o mesmo livro-caixa do Financeiro.
-    repair_financial_history()
-    today = local_today()
+    today = date.today()
     month_start = today.replace(day=1)
     next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
 
@@ -1479,7 +1402,6 @@ def service_new():
                 assigned_employee_id=request.form.get("employee_id", type=int),
                 assigned_employee_value=decimal_or_zero(request.form.get("helper_value")),
                 assigned_employee_payment_status=normalize_helper_payment_status(request.form.get("helper_payment_status"), "pending"),
-                assigned_employee_paid_date=parse_date(request.form.get("helper_paid_date")),
                 quick_client_name=quick_client_name, quick_client_phone=quick_client_phone,
                 busy_dates=busy_dates,
             )
@@ -1510,7 +1432,6 @@ def service_new():
                 assigned_employee_id=request.form.get("employee_id", type=int),
                 assigned_employee_value=decimal_or_zero(request.form.get("helper_value")),
                 assigned_employee_payment_status=normalize_helper_payment_status(request.form.get("helper_payment_status"), "pending"),
-                assigned_employee_paid_date=parse_date(request.form.get("helper_paid_date")),
                 quick_client_name=quick_client_name, quick_client_phone=quick_client_phone,
                 busy_dates=busy_dates,
             )
@@ -1526,13 +1447,11 @@ def service_new():
                 request.form.get("helper_payment_status"),
                 "paid" if service.status == "completed" else "pending",
             )
-            helper_paid_date = parse_date(request.form.get("helper_paid_date")) if helper_payment_status == "paid" else None
             assignment = ServiceAssignment(
                 service_id=service.id,
                 employee_id=employee.id,
                 helper_value=decimal_or_zero(request.form.get("helper_value")),
                 helper_payment_status=helper_payment_status,
-                helper_paid_date=helper_paid_date or (local_today() if helper_payment_status == "paid" else None),
             )
             db.session.add(assignment)
         db.session.flush()
@@ -1558,7 +1477,7 @@ def service_new():
         "service_form.html", service=None, clients=clients_list, employees=employees_list,
         selected_client=selected_client, selected_client_obj=selected_client_obj, selected_date=selected_date,
         assigned_employee_id=None, assigned_employee_value=Decimal("0"),
-        assigned_employee_payment_status="pending", assigned_employee_paid_date=None,
+        assigned_employee_payment_status="pending",
         quick_client_name=(selected_client_obj.name if selected_client_obj else ""),
         quick_client_phone=(selected_client_obj.phone if selected_client_obj else ""),
         busy_dates=busy_dates,
@@ -1612,14 +1531,11 @@ def service_edit(service_id):
                 assigned_employee_id=current_assignment.employee_id if current_assignment else None,
                 assigned_employee_value=current_assignment.helper_value if current_assignment else Decimal("0"),
                 assigned_employee_payment_status=(current_assignment.helper_payment_status if current_assignment else "pending"),
-                assigned_employee_paid_date=(current_assignment.helper_paid_date if current_assignment else None),
                 busy_dates=busy_dates,
             )
 
         old_employee_id = current_assignment.employee_id if current_assignment else None
         old_helper_value = Decimal(current_assignment.helper_value or 0) if current_assignment else Decimal('0')
-        old_helper_payment_status = current_assignment.helper_payment_status if current_assignment else "pending"
-        old_helper_paid_date = current_assignment.helper_paid_date if current_assignment else None
         old_date = service.service_date
         old_time = service.service_time
         old_all_day = service.all_day
@@ -1655,22 +1571,11 @@ def service_edit(service_id):
                 request.form.get("helper_payment_status"),
                 current_assignment.helper_payment_status if current_assignment else ("paid" if service.status == "completed" else "pending"),
             )
-            requested_paid_date = parse_date(request.form.get("helper_paid_date"))
-            if helper_payment_status == "paid":
-                if requested_paid_date:
-                    helper_paid_date = requested_paid_date
-                elif old_helper_payment_status == "paid" and old_helper_paid_date:
-                    helper_paid_date = old_helper_paid_date
-                else:
-                    helper_paid_date = local_today()
-            else:
-                helper_paid_date = None
             new_assignment = ServiceAssignment(
                 service_id=service.id,
                 employee_id=employee.id,
                 helper_value=decimal_or_zero(request.form.get("helper_value")),
                 helper_payment_status=helper_payment_status,
-                helper_paid_date=helper_paid_date,
             )
             db.session.add(new_assignment)
         db.session.flush()
@@ -1712,7 +1617,6 @@ def service_edit(service_id):
         assigned_employee_id=current_assignment.employee_id if current_assignment else None,
         assigned_employee_value=current_assignment.helper_value if current_assignment else Decimal("0"),
         assigned_employee_payment_status=(current_assignment.helper_payment_status if current_assignment else "pending"),
-        assigned_employee_paid_date=(current_assignment.helper_paid_date if current_assignment else None),
         busy_dates=busy_dates,
     )
 
@@ -1759,19 +1663,13 @@ def service_assign_helper(service_id):
         "paid" if service.status == "completed" else "pending",
     )
     assignment = ServiceAssignment.query.filter_by(service_id=service.id, employee_id=employee.id).first()
-    requested_paid_date = parse_date(request.form.get("helper_paid_date"))
-    if helper_payment_status == "paid":
-        helper_paid_date = requested_paid_date or (assignment.helper_paid_date if assignment and assignment.helper_payment_status == "paid" else None) or local_today()
-    else:
-        helper_paid_date = None
     if assignment:
         assignment.helper_value = helper_value
         assignment.helper_payment_status = helper_payment_status
-        assignment.helper_paid_date = helper_paid_date
     else:
         assignment = ServiceAssignment(
             service_id=service.id, employee_id=employee.id, helper_value=helper_value,
-            helper_payment_status=helper_payment_status, helper_paid_date=helper_paid_date,
+            helper_payment_status=helper_payment_status,
         )
         db.session.add(assignment)
 
@@ -1806,31 +1704,6 @@ def service_assign_helper(service_id):
         app.logger.warning("Serviço atribuído, mas o disparo do push falhou: %s", exc)
 
     flash(f"Serviço enviado para {employee.name}. Já aparece no celular dele.", "success")
-    return redirect(url_for("service_detail", service_id=service.id) + "#enviar-ajudante")
-
-
-@app.route("/services/<int:service_id>/helper/<int:assignment_id>/toggle-payment", methods=["POST"])
-@admin_required
-def service_helper_toggle_payment(service_id, assignment_id):
-    """Baixa/estorna o pagamento do ajudante diretamente no serviço."""
-    service = Service.query.get_or_404(service_id)
-    assignment = ServiceAssignment.query.filter_by(id=assignment_id, service_id=service.id).first_or_404()
-    if Decimal(assignment.helper_value or 0) <= 0:
-        flash("Informe primeiro o valor do ajudante neste serviço.", "error")
-        return redirect(url_for("service_detail", service_id=service.id) + "#enviar-ajudante")
-
-    if assignment.helper_payment_status == "paid":
-        assignment.helper_payment_status = "pending"
-        assignment.helper_paid_date = None
-        message = f"Pagamento de {assignment.employee.name} voltou para A pagar."
-    else:
-        assignment.helper_payment_status = "paid"
-        assignment.helper_paid_date = local_today()
-        message = f"Pagamento de {assignment.employee.name} baixado no Financeiro."
-
-    sync_service_helper_expenses(service)
-    db.session.commit()
-    flash(message, "success")
     return redirect(url_for("service_detail", service_id=service.id) + "#enviar-ajudante")
 
 
@@ -1910,11 +1783,10 @@ def service_status(service_id):
             if t.ended_at is None:
                 t.ended_at = datetime.utcnow()
         sync_service_total(service)
-    # A cobrança acompanha o serviço em qualquer mudança. Cancelado remove a
-    # pendência automaticamente; recebido já realizado continua no histórico.
-    ensure_income_entry(service)
-    # O valor do ajudante existe no Financeiro independentemente do status:
-    # pago entra em Saídas; pendente fica em A pagar.
+        ensure_income_entry(service)
+    # O valor do ajudante vira "A pagar" no financeiro somente quando o
+    # serviço está concluído. Se o status voltar atrás, remove apenas a
+    # pendência automática ainda não paga.
     sync_service_helper_expenses(service)
     db.session.commit()
     flash("Status atualizado.", "success")
@@ -2570,12 +2442,10 @@ def quote_convert(quote_id):
         assignment = ServiceAssignment(
             service_id=service.id, employee_id=employee.id,
             helper_value=decimal_or_zero(request.form.get("helper_value")),
-            helper_payment_status="pending", helper_paid_date=None,
+            helper_payment_status="pending",
         )
         db.session.add(assignment)
 
-    db.session.flush()
-    sync_service_helper_expenses(service)
     db.session.commit()
 
     if assignment:
@@ -2811,25 +2681,26 @@ def get_finance_month_summary(month_value=None):
     is_current_month = month_start.year == today.year and month_start.month == today.month
     is_future_month = month_start > today.replace(day=1)
 
-    # Caixa realizado usa a data em que o dinheiro realmente entrou/saiu.
-    paid_reference_date = func.coalesce(FinanceEntry.paid_date, FinanceEntry.due_date)
     paid_entries = FinanceEntry.query.filter(
         FinanceEntry.status == "paid",
-        paid_reference_date >= month_start,
-        paid_reference_date < next_month,
-    ).order_by(paid_reference_date.asc(), FinanceEntry.id.asc()).all()
-
-    # No mês atual, carrega também pendências vencidas de meses anteriores. Elas
-    # continuam abertas hoje e precisam aparecer para o financeiro ser útil.
-    pending_base = [FinanceEntry.status == "pending", FinanceEntry.due_date < next_month]
-    if not is_current_month:
-        pending_base.append(FinanceEntry.due_date >= month_start)
+        or_(
+            (FinanceEntry.paid_date >= month_start) & (FinanceEntry.paid_date < next_month),
+            (FinanceEntry.paid_date.is_(None)) & (FinanceEntry.due_date >= month_start) & (FinanceEntry.due_date < next_month),
+        ),
+    ).order_by(FinanceEntry.paid_date.asc().nullsfirst(), FinanceEntry.due_date.asc(), FinanceEntry.id.asc()).all()
 
     pending_entries = FinanceEntry.query.filter(
-        FinanceEntry.type == "income", *pending_base
+        FinanceEntry.type == "income",
+        FinanceEntry.status == "pending",
+        FinanceEntry.due_date >= month_start,
+        FinanceEntry.due_date < next_month,
     ).order_by(FinanceEntry.due_date.asc(), FinanceEntry.id.asc()).all()
+
     pending_expense_entries = FinanceEntry.query.filter(
-        FinanceEntry.type == "expense", *pending_base
+        FinanceEntry.type == "expense",
+        FinanceEntry.status == "pending",
+        FinanceEntry.due_date >= month_start,
+        FinanceEntry.due_date < next_month,
     ).order_by(FinanceEntry.due_date.asc(), FinanceEntry.id.asc()).all()
 
     income_entries = [x for x in paid_entries if x.type == "income"]
@@ -2841,11 +2712,6 @@ def get_finance_month_summary(month_value=None):
     payable = sum((Decimal(x.amount or 0) for x in pending_expense_entries), Decimal("0"))
     balance = received - expenses
     forecast_balance = balance + receivable - payable
-
-    overdue_income_entries = [x for x in pending_entries if x.due_date and x.due_date < month_start]
-    overdue_expense_entries = [x for x in pending_expense_entries if x.due_date and x.due_date < month_start]
-    overdue_receivable = sum((Decimal(x.amount or 0) for x in overdue_income_entries), Decimal("0"))
-    overdue_payable = sum((Decimal(x.amount or 0) for x in overdue_expense_entries), Decimal("0"))
 
     def grouped_categories(entries, default_label):
         grouped = {}
@@ -2875,10 +2741,6 @@ def get_finance_month_summary(month_value=None):
         "receivable": receivable,
         "payable": payable,
         "forecast_balance": forecast_balance,
-        "overdue_receivable": overdue_receivable,
-        "overdue_payable": overdue_payable,
-        "overdue_income_entries": overdue_income_entries,
-        "overdue_expense_entries": overdue_expense_entries,
         "income_entries": income_entries,
         "expense_entries": expense_entries,
         "pending_entries": pending_entries,
@@ -3078,30 +2940,23 @@ def build_finance_month_pdf(summary):
 @app.route("/finance")
 @login_required
 def finance():
-    # O Financeiro se reconcilia sozinho ao abrir. Isso elimina o cenário em
-    # que o valor está salvo no serviço/equipe, mas o lançamento ficou para trás.
-    repair_financial_history()
-
     type_filter = request.args.get("type", "")
     status_filter = request.args.get("status", "")
-    today = local_today()
+    focus = request.args.get("focus", "").strip().lower()
+    if focus not in {"receivable", "payable"}:
+        focus = ""
+
+    today = date.today()
     default_start = today.replace(day=1)
     default_end = ((default_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1))
     start = parse_date(request.args.get("start"), default_start)
     end = parse_date(request.args.get("end"), default_end)
-    end_exclusive = end + timedelta(days=1)
-
-    paid_reference_date = func.coalesce(FinanceEntry.paid_date, FinanceEntry.due_date)
-    period_condition = or_(
-        and_(FinanceEntry.status == "paid", paid_reference_date >= start, paid_reference_date < end_exclusive),
-        and_(FinanceEntry.status == "pending", FinanceEntry.due_date >= start, FinanceEntry.due_date < end_exclusive),
-    )
-    query = FinanceEntry.query.filter(period_condition)
+    query = FinanceEntry.query.filter(FinanceEntry.due_date >= start, FinanceEntry.due_date <= end)
     if type_filter:
-        query = query.filter(FinanceEntry.type == type_filter)
+        query = query.filter_by(type=type_filter)
     if status_filter:
-        query = query.filter(FinanceEntry.status == status_filter)
-    entries = query.order_by(paid_reference_date.desc(), FinanceEntry.id.desc()).all()
+        query = query.filter_by(status=status_filter)
+    entries = query.order_by(FinanceEntry.due_date.desc(), FinanceEntry.id.desc()).all()
 
     paid_income = sum((Decimal(x.amount or 0) for x in entries if x.type == "income" and x.status == "paid"), Decimal("0"))
     pending_income = sum((Decimal(x.amount or 0) for x in entries if x.type == "income" and x.status == "pending"), Decimal("0"))
@@ -3109,23 +2964,25 @@ def finance():
     pending_expense = sum((Decimal(x.amount or 0) for x in entries if x.type == "expense" and x.status == "pending"), Decimal("0"))
     summary = get_finance_month_summary(request.args.get("month"))
 
-    # Origem visível para o usuário saber de onde cada valor veio.
-    helper_entry_ids = {
-        x.finance_entry_id for x in EmployeeExpense.query.filter(EmployeeExpense.finance_entry_id.isnot(None)).all()
-    }
-    entry_sources = {}
-    for entry in entries:
-        if entry.id in helper_entry_ids or entry.source_type == "helper":
-            entry_sources[entry.id] = "Ajudante"
-        elif entry.service_id or entry.source_type == "service":
-            entry_sources[entry.id] = "Serviço"
-        else:
-            entry_sources[entry.id] = "Manual"
+    # Painel aberto ao tocar nos cards "A receber" / "A pagar".
+    # Usa exatamente os lançamentos que compõem os totais do resumo do mês.
+    focus_entries = []
+    focus_total = Decimal("0")
+    focus_team_expenses = {}
+    if focus == "receivable":
+        focus_entries = summary["pending_entries"]
+        focus_total = summary["receivable"]
+    elif focus == "payable":
+        focus_entries = summary["pending_expense_entries"]
+        focus_total = summary["payable"]
+        entry_ids = [x.id for x in focus_entries]
+        if entry_ids:
+            linked_expenses = EmployeeExpense.query.filter(EmployeeExpense.finance_entry_id.in_(entry_ids)).all()
+            focus_team_expenses = {x.finance_entry_id: x for x in linked_expenses if x.finance_entry_id}
 
     return render_template(
         "finance.html",
         entries=entries,
-        entry_sources=entry_sources,
         type_filter=type_filter,
         status_filter=status_filter,
         start=start,
@@ -3135,6 +2992,10 @@ def finance():
         paid_expense=paid_expense,
         pending_expense=pending_expense,
         summary=summary,
+        focus=focus,
+        focus_entries=focus_entries,
+        focus_total=focus_total,
+        focus_team_expenses=focus_team_expenses,
     )
 
 
@@ -3142,19 +3003,10 @@ def finance():
 @app.route("/finance/monthly/pdf")
 @login_required
 def finance_monthly_pdf():
-    repair_financial_history()
     summary = get_finance_month_summary(request.args.get("month"))
     pdf = build_finance_month_pdf(summary)
     filename = f"resumo-financeiro-{summary['month_value']}.pdf"
     return send_file(pdf, mimetype="application/pdf", as_attachment=True, download_name=filename, max_age=0)
-
-
-@app.route("/finance/reconcile", methods=["POST"])
-@admin_required
-def finance_reconcile():
-    services_count, expenses_count, dates_count = repair_financial_history()
-    flash(f"Financeiro conferido: {services_count} serviços e {expenses_count} gastos da equipe sincronizados.", "success")
-    return redirect(request.referrer or url_for("finance"))
 
 
 @app.route("/finance/new", methods=["GET", "POST"])
@@ -3179,12 +3031,9 @@ def finance_new():
             status=preset_status,
             payment_method=request.form.get("payment_method", "").strip(),
             notes=request.form.get("notes", "").strip(),
-            source_type="manual", source_key="",
         )
         if entry.status == "paid" and not entry.paid_date:
-            entry.paid_date = local_today()
-        if entry.status == "pending":
-            entry.paid_date = None
+            entry.paid_date = date.today()
         if not entry.description or entry.amount <= 0:
             flash("Preencha a descrição e um valor maior que zero.", "error")
             return render_template("finance_form.html", entry=entry, clients=clients_list)
@@ -3219,11 +3068,9 @@ def finance_edit(entry_id):
         entry.payment_method = request.form.get("payment_method", "").strip()
         entry.notes = request.form.get("notes", "").strip()
         if entry.status == "paid" and not entry.paid_date:
-            entry.paid_date = local_today()
+            entry.paid_date = date.today()
         if entry.status == "pending":
             entry.paid_date = None
-        if not entry.source_type:
-            entry.source_type = "manual"
         db.session.commit()
         flash("Lançamento atualizado.", "success")
         return redirect(url_for("finance"))
@@ -3266,15 +3113,12 @@ def finance_toggle(entry_id):
     team_expense = EmployeeExpense.query.filter_by(finance_entry_id=entry.id).first()
     if team_expense:
         team_expense.status = entry.status
-        team_expense.paid_date = entry.paid_date if entry.status == "paid" else None
         if team_expense.notes == AUTO_HELPER_SERVICE_NOTE and team_expense.service_id:
             assignment = ServiceAssignment.query.filter_by(
                 service_id=team_expense.service_id, employee_id=team_expense.employee_id
             ).first()
             if assignment:
                 assignment.helper_payment_status = entry.status
-                assignment.helper_paid_date = entry.paid_date if entry.status == "paid" else None
-        sync_employee_expense_finance(team_expense)
     db.session.commit()
     flash("Situação financeira atualizada.", "success")
     return redirect(request.referrer or url_for("finance"))
@@ -3413,67 +3257,49 @@ def employee_running_session(employee_id, task_id=None, service_id=None):
 
 
 def sync_employee_expense_finance(expense):
-    """Projeta um gasto da equipe no Financeiro, sempre 1 para 1.
-
-    O vínculo por ``finance_entry_id`` e ``source_key`` deixa a rotina resistente
-    a redeploys e a reparos de histórico: um gasto da equipe nunca precisa ser
-    digitado outra vez no Financeiro.
-    """
-    label = dict(
-        daily="Diária", meal="Alimentação", fuel="Combustível",
-        advance="Adiantamento", payment="Pagamento", other="Outro",
-    ).get(expense.category, expense.category)
+    label = dict(daily='Diária', meal='Alimentação', fuel='Combustível', advance='Adiantamento', payment='Pagamento', other='Outro').get(expense.category, expense.category)
     if expense.notes == AUTO_HELPER_SERVICE_NOTE and expense.service:
         description = f"Equipe - {expense.employee.name}: Pagamento serviço #{expense.service.id} - {expense.service.title}"
     else:
         description = f"Equipe - {expense.employee.name}: {label}"
         if expense.notes:
             description += f" - {expense.notes}"
-
-    source_key = f"employee_expense:{expense.id}" if expense.id else ""
     entry = db.session.get(FinanceEntry, expense.finance_entry_id) if expense.finance_entry_id else None
-    if entry is None and source_key:
-        entry = FinanceEntry.query.filter_by(source_key=source_key, type="expense").order_by(FinanceEntry.id.asc()).first()
-        if entry:
-            expense.finance_entry_id = entry.id
-
-    if entry is None:
-        entry = FinanceEntry(
-            type="expense", service_id=expense.service_id, description=description,
-            category="Equipe / Ajudante", amount=expense.amount,
-            due_date=expense.expense_date or local_today(), status=expense.status,
-            source_type="helper", source_key=source_key,
-        )
+    if not entry:
+        entry = FinanceEntry(type="expense", service_id=expense.service_id, description=description, category="Equipe / Ajudante", amount=expense.amount, due_date=expense.expense_date, status=expense.status)
         db.session.add(entry)
         db.session.flush()
         expense.finance_entry_id = entry.id
-
-    entry.type = "expense"
     entry.service_id = expense.service_id
     entry.description = description
     entry.category = "Equipe / Ajudante"
     entry.amount = expense.amount
-    entry.due_date = expense.expense_date or local_today()
+    entry.due_date = expense.expense_date
     entry.status = expense.status
-    entry.source_type = "helper"
-    entry.source_key = source_key or entry.source_key or ""
-
     if expense.status == "paid":
-        if not expense.paid_date:
-            expense.paid_date = expense.expense_date or local_today()
-        entry.paid_date = expense.paid_date
+        # Para valores de ajudante ligados ao serviço, usa a data do serviço
+        # quando ela já passou. Assim os históricos antigos entram no mês
+        # correto em vez de cair todos no mês do redeploy. Para serviço futuro,
+        # registra a baixa na data de hoje.
+        if expense.notes == AUTO_HELPER_SERVICE_NOTE:
+            historical_date = expense.expense_date or local_today()
+            paid_on = historical_date if historical_date <= local_today() else local_today()
+            entry.paid_date = entry.paid_date or paid_on
+        else:
+            entry.paid_date = expense.expense_date
     else:
-        expense.paid_date = None
         entry.paid_date = None
 
 
 def sync_service_helper_expenses(service):
-    """Mantém custo do ajudante e Financeiro sincronizados em tempo real.
+    """Mantém o valor do ajudante 100% sincronizado com o Financeiro.
 
-    Cada ajudante atribuído com valor > 0 gera exatamente um ``EmployeeExpense``
-    automático e, por consequência, exatamente um ``FinanceEntry``. Se estiver
-    ``paid`` o valor entra em Saídas pelo ``helper_paid_date``; se estiver
-    ``pending`` aparece em A pagar. Não depende do status do serviço para existir.
+    Assim que existe um ajudante com valor definido, o financeiro recebe um
+    lançamento ligado ao serviço. O status vem da própria atribuição:
+    ``paid`` entra em Gastos; ``pending`` entra em A pagar. Isso evita o caso
+    em que o valor aparece no serviço/lucro, mas some do Financeiro.
+
+    A rotina é idempotente e pode rodar em todo redeploy sem duplicar.
     """
     if not service or not service.id:
         return
@@ -3482,50 +3308,35 @@ def sync_service_helper_expenses(service):
         service_id=service.id, notes=AUTO_HELPER_SERVICE_NOTE
     ).order_by(EmployeeExpense.id.asc()).all()
 
-    # Histórico já pago é evidência forte durante migrações antigas. Assim uma
-    # atribuição que ficou com status padrão "pending" não apaga uma baixa que
-    # já existia no financeiro.
-    legacy_paid_by_employee = {}
-    for expense in auto_expenses:
-        if expense.status == "paid" and expense.employee_id not in legacy_paid_by_employee:
-            legacy_paid_by_employee[expense.employee_id] = expense
-
     assignments = ServiceAssignment.query.filter_by(service_id=service.id).all()
     desired = {}
     for assignment in assignments:
         helper_value = max(Decimal("0"), Decimal(assignment.helper_value or 0))
         if helper_value <= 0:
             continue
+        # Instalações antigas podem ter valor nulo até a migração/redeploy.
+        # Serviço concluído segue o comportamento esperado pelo Guilherme:
+        # custo pago. Serviços ainda em aberto ficam previstos como A pagar.
         fallback = "paid" if service.status == "completed" else "pending"
         payment_status = normalize_helper_payment_status(
             getattr(assignment, "helper_payment_status", None), fallback
         )
-        legacy_paid = legacy_paid_by_employee.get(assignment.employee_id)
-        if payment_status == "pending" and legacy_paid is not None:
-            payment_status = "paid"
-            assignment.helper_paid_date = legacy_paid.paid_date or legacy_paid.expense_date
         assignment.helper_payment_status = payment_status
-        if payment_status == "paid":
-            assignment.helper_paid_date = (
-                assignment.helper_paid_date
-                or (service.service_date if service.service_date and service.service_date <= local_today() else local_today())
-            )
-        else:
-            assignment.helper_paid_date = None
         desired[assignment.employee_id] = (assignment, helper_value, payment_status)
 
-    # Mantém no máximo um gasto automático por ajudante/serviço.
     by_employee = {}
     for expense in auto_expenses:
         if expense.employee_id not in by_employee:
             by_employee[expense.employee_id] = expense
         else:
+            # Remove duplicata automática antiga, se existir.
             if expense.finance_entry_id:
                 entry = db.session.get(FinanceEntry, expense.finance_entry_id)
                 if entry:
                     db.session.delete(entry)
             db.session.delete(expense)
 
+    # Cria/atualiza exatamente um lançamento por ajudante atribuído.
     for employee_id, (assignment, helper_value, payment_status) in desired.items():
         expense = by_employee.get(employee_id)
         if expense is None:
@@ -3533,7 +3344,6 @@ def sync_service_helper_expenses(service):
                 employee_id=employee_id,
                 service_id=service.id,
                 expense_date=service.service_date or local_today(),
-                paid_date=assignment.helper_paid_date if payment_status == "paid" else None,
                 category="payment",
                 amount=helper_value,
                 status=payment_status,
@@ -3542,30 +3352,23 @@ def sync_service_helper_expenses(service):
             db.session.add(expense)
             db.session.flush()
         else:
-            expense.service_id = service.id
             expense.expense_date = service.service_date or expense.expense_date or local_today()
             expense.category = "payment"
             expense.amount = helper_value
             expense.status = payment_status
-            expense.paid_date = assignment.helper_paid_date if payment_status == "paid" else None
             expense.notes = AUTO_HELPER_SERVICE_NOTE
         sync_employee_expense_finance(expense)
 
-    # Ajudante removido: pendência automática desaparece; pagamento já feito
-    # permanece no histórico e continua contando como custo daquele serviço.
+    # Se trocou/removeu o ajudante, apaga apenas o lançamento automático que
+    # ainda está pendente. Valor já pago permanece como histórico.
     for employee_id, expense in by_employee.items():
-        if employee_id in desired:
+        if employee_id in desired or expense.status != "pending":
             continue
-        if expense.status == "pending":
-            if expense.finance_entry_id:
-                entry = db.session.get(FinanceEntry, expense.finance_entry_id)
-                if entry:
-                    db.session.delete(entry)
-            db.session.delete(expense)
-        else:
-            # Pagamento já realizado continua ligado ao serviço como custo
-            # histórico, mesmo se o responsável for trocado depois.
-            sync_employee_expense_finance(expense)
+        if expense.finance_entry_id:
+            entry = db.session.get(FinanceEntry, expense.finance_entry_id)
+            if entry:
+                db.session.delete(entry)
+        db.session.delete(expense)
 
 
 @app.route("/team")
@@ -3609,7 +3412,6 @@ def team_workdays():
         expense = EmployeeExpense(
             employee_id=employee.id,
             expense_date=work_date,
-            paid_date=(local_today() if status == "paid" else None),
             category="daily",
             amount=amount,
             status=status,
@@ -3849,14 +3651,7 @@ def employee_expense_new(employee_id):
     if amount <= 0:
         flash("Informe um valor maior que zero.", "error")
         return redirect(url_for("employee_detail", employee_id=employee.id))
-    expense_status = request.form.get("status", "paid")
-    expense_date = parse_date(request.form.get("expense_date"), local_today())
-    expense = EmployeeExpense(
-        employee_id=employee.id, service_id=request.form.get("service_id", type=int),
-        expense_date=expense_date, paid_date=(local_today() if expense_status == "paid" else None),
-        category=request.form.get("category", "daily"), amount=amount, status=expense_status,
-        notes=request.form.get("notes", "").strip(),
-    )
+    expense = EmployeeExpense(employee_id=employee.id, service_id=request.form.get("service_id", type=int), expense_date=parse_date(request.form.get("expense_date"), date.today()), category=request.form.get("category", "daily"), amount=amount, status=request.form.get("status", "paid"), notes=request.form.get("notes", "").strip())
     db.session.add(expense)
     db.session.flush()
     sync_employee_expense_finance(expense)
@@ -3870,14 +3665,12 @@ def employee_expense_new(employee_id):
 def employee_expense_toggle(expense_id):
     expense = EmployeeExpense.query.get_or_404(expense_id)
     expense.status = "paid" if expense.status == "pending" else "pending"
-    expense.paid_date = local_today() if expense.status == "paid" else None
     if expense.notes == AUTO_HELPER_SERVICE_NOTE and expense.service_id:
         assignment = ServiceAssignment.query.filter_by(
             service_id=expense.service_id, employee_id=expense.employee_id
         ).first()
         if assignment:
             assignment.helper_payment_status = expense.status
-            assignment.helper_paid_date = expense.paid_date if expense.status == "paid" else None
     sync_employee_expense_finance(expense)
     db.session.commit()
     flash("Situação do gasto atualizada.", "success")
