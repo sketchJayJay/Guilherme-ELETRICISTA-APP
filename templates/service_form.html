@@ -90,13 +90,18 @@
             <div class="help">Esse é o único valor do serviço que o ajudante consegue enxergar. O valor cobrado do cliente continua privado.</div>
           </div>
 
-          <div class="field full" id="helperPaymentStatusField">
+          <div class="field" id="helperPaymentStatusField">
             <label>Situação do pagamento do ajudante</label>
-            <select class="select" name="helper_payment_status">
+            <select class="select" name="helper_payment_status" id="helperPaymentStatus" onchange="toggleHelperPaymentDate()">
               <option value="paid" {% if assigned_employee_payment_status=='paid' %}selected{% endif %}>Já paguei o ajudante</option>
               <option value="pending" {% if assigned_employee_payment_status!='paid' %}selected{% endif %}>Ainda vou pagar</option>
             </select>
-            <div class="help">Se marcar “Já paguei”, o valor entra em Gastos no Financeiro. Se marcar “Ainda vou pagar”, entra em A pagar.</div>
+            <div class="help">Pago entra em Saídas. Pendente fica em A pagar.</div>
+          </div>
+          <div class="field" id="helperPaidDateField">
+            <label>Data em que pagou</label>
+            <input class="input" type="date" name="helper_paid_date" value="{{ assigned_employee_paid_date.isoformat() if assigned_employee_paid_date else today.isoformat() }}">
+            <div class="help">É esta data que define em qual mês o gasto entra no caixa.</div>
           </div>
 
           <div class="field">
@@ -213,7 +218,8 @@
 <script>
 function toggleTime(){document.getElementById('timeField').style.display=document.getElementById('allDay').value==='1'?'none':'grid'}
 function toggleCharge(){let h=document.getElementById('chargeType').value==='hourly';document.querySelectorAll('.hourly').forEach(x=>x.style.display=h?'grid':'none');document.querySelectorAll('.fixed').forEach(x=>x.style.display=h?'none':'grid')}
-function toggleHelperValue(){const s=document.getElementById('employeeSelect');const f=document.getElementById('helperValueField');if(f)f.style.display=s&&s.value?'grid':'none'}
+function toggleHelperValue(){var s=document.getElementById('employeeSelect');var show=!!(s&&s.value);['helperValueField','helperPaymentStatusField','helperPaidDateField'].forEach(function(id){var el=document.getElementById(id);if(el)el.style.display=show?'grid':'none'});toggleHelperPaymentDate()}
+function toggleHelperPaymentDate(){var s=document.getElementById('employeeSelect');var status=document.getElementById('helperPaymentStatus');var box=document.getElementById('helperPaidDateField');if(box)box.style.display=(s&&s.value&&status&&status.value==='paid')?'grid':'none'}
 function toggleQuickClientPhone(){
   var select=document.querySelector('[data-client-select]');
   var phoneBox=document.getElementById('quickClientNewFields');
@@ -316,6 +322,6 @@ if(quickClientSearch)quickClientSearch.addEventListener('blur',function(){setTim
   updateSelectedUi();
 })();
 
-toggleTime();toggleCharge();toggleHelperValue();toggleQuickClientPhone();
+toggleTime();toggleCharge();toggleHelperValue();toggleHelperPaymentDate();toggleQuickClientPhone();
 </script>
 {% endblock %}
