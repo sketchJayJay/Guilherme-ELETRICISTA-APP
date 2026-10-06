@@ -953,3 +953,18 @@ a.finance-summary-link:focus{outline:2px solid #fff;outline-offset:3px}
 .finance-pending-side{display:grid;justify-items:end;gap:9px}.finance-pending-value{font-size:19px;color:#fff;white-space:nowrap}.finance-pending-side .actions{justify-content:flex-end}.finance-pending-side form{margin:0}
 .finance-pending-empty{padding:22px;text-align:center;border:1px dashed rgba(255,255,255,.13);border-radius:16px;color:#fff}.finance-pending-empty span{display:block;margin-top:5px;color:#8fa6c4;font-size:12px}.finance-pending-footer{display:flex;justify-content:flex-start;margin-top:14px}
 @media(max-width:760px){.finance-pending-panel{padding:14px;border-radius:18px}.finance-pending-head{display:grid;gap:10px}.finance-pending-total{text-align:left;width:100%}.finance-pending-row{display:grid;gap:12px}.finance-pending-side{justify-items:stretch}.finance-pending-value{font-size:18px}.finance-pending-side .actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.finance-pending-side .actions .btn,.finance-pending-side .actions form,.finance-pending-side .actions form .btn{width:100%}.finance-pending-head h2{font-size:21px}}
+
+/* Financeiro 06-10-2026: fechamento por competência */
+.finance-result-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px}
+.finance-summary-card.billed{color:#79b8ff;border-color:rgba(121,184,255,.25)}
+.finance-summary-card.profit{color:#6fe6a8;border-color:rgba(111,230,168,.25)}
+.finance-cash-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+.finance-check-line{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin:14px 0;padding:12px 14px;border:1px solid rgba(255,255,255,.09);border-radius:15px;background:rgba(255,255,255,.025);color:#b8c9df;font-size:13px;line-height:1.45}
+.finance-check-line strong,.finance-check-line b{color:#fff}.finance-check-note{width:100%;color:#89a0c0;font-size:11px}
+.finance-focus-subtitle{margin:15px 0 8px;color:#91a8c6;font-size:11px;font-weight:850;text-transform:uppercase;letter-spacing:.08em}
+.finance-ledger-card{margin-top:18px}.finance-ledger-card .card-head>div{display:grid;gap:4px}
+.finance-summary-link{text-decoration:none;display:block;transition:border-color .15s ease,background .15s ease}
+@media(hover:hover) and (pointer:fine){.finance-summary-link:hover{background:rgba(255,255,255,.045);border-color:rgba(255,255,255,.18)}}
+@media(max-width:980px){.finance-cash-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.finance-result-strip{grid-template-columns:1fr}.finance-cash-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.finance-check-line{font-size:12px}}
+@media(max-width:430px){.finance-cash-grid{grid-template-columns:1fr 1fr}.finance-summary-card strong{font-size:19px}}

@@ -1,10 +1,17 @@
 {% extends 'base.html' %}{% block content %}
 <div class="page-head">
-  <div><h1>Financeiro</h1><p>Registre o que entrou, o que saiu e acompanhe o fechamento do mês.</p></div>
+  <div>
+    <h1>Financeiro</h1>
+    <p>Fechamento por mês usando os serviços e gastos cadastrados como fonte principal.</p>
+  </div>
   <div class="actions">
-    <a class="btn success" href="{{ url_for('finance_new', type='income', status='paid') }}">+ Recebimento</a>
+    <form method="post" action="{{ url_for('finance_reconcile') }}">
+      <input type="hidden" name="month" value="{{ summary.month_value }}">
+      <button class="btn" type="submit">↻ Conferir financeiro</button>
+    </form>
+    <a class="btn success" href="{{ url_for('finance_new', type='income', status='paid') }}">+ Recebimento avulso</a>
     <a class="btn danger" href="{{ url_for('finance_new', type='expense', status='paid') }}">+ Gasto</a>
-    <a class="btn" href="{{ url_for('finance_new', type='income', status='pending') }}">+ A receber</a>
+    <a class="btn" href="{{ url_for('finance_new', type='income', status='pending') }}">+ A receber avulso</a>
   </div>
 </div>
 
@@ -13,147 +20,180 @@
     <div>
       <div class="finance-month-kicker">{% if summary.is_current_month %}RESUMO PARCIAL DO MÊS{% elif summary.is_future_month %}PREVISÃO DO MÊS{% else %}FECHAMENTO DO MÊS{% endif %}</div>
       <h2>{{ summary.month_label }}</h2>
-      {% if summary.is_current_month %}
-      <p>Valores movimentados até {{ summary.today|datebr }} e pendências previstas até {{ summary.month_end|datebr }}.</p>
-      {% elif summary.is_future_month %}
-      <p>Previsão dos lançamentos já cadastrados para este mês.</p>
-      {% else %}
-      <p>Fechamento consolidado do período selecionado.</p>
-      {% endif %}
+      <p>O faturamento vem diretamente dos serviços do mês. Os gastos incluem o que já foi pago e o que ainda está a pagar.</p>
     </div>
     <form method="get" class="finance-month-picker">
-      <input type="hidden" name="start" value="{{ start.isoformat() }}">
-      <input type="hidden" name="end" value="{{ end.isoformat() }}">
-      <input type="hidden" name="type" value="{{ type_filter }}">
-      <input type="hidden" name="status" value="{{ status_filter }}">
+      <input type="hidden" name="start" value="{{ summary.month_start.isoformat() }}">
+      <input type="hidden" name="end" value="{{ summary.month_end.isoformat() }}">
       <input class="input" type="month" name="month" value="{{ summary.month_value }}">
       <button class="btn" type="submit">Ver mês</button>
       <a class="btn blue" href="{{ url_for('finance_monthly_pdf', month=summary.month_value) }}">📄 Resumo PDF</a>
     </form>
   </div>
 
-  <div class="finance-summary-grid">
-    <div class="finance-summary-card received"><small>{% if summary.is_current_month %}Recebido até hoje{% else %}Recebido{% endif %}</small><strong>{{ summary.received|money }}</strong><span>Entradas confirmadas{% if summary.is_current_month %} até {{ summary.today|datebr }}{% endif %}</span></div>
-    <div class="finance-summary-card expense"><small>{% if summary.is_current_month %}Gastos até hoje{% else %}Gastos{% endif %}</small><strong>{{ summary.expenses|money }}</strong><span>Despesas pagas{% if summary.is_current_month %} até {{ summary.today|datebr }}{% endif %}</span></div>
-    <div class="finance-summary-card balance"><small>{% if summary.is_current_month %}Saldo em caixa{% else %}Saldo realizado{% endif %}</small><strong>{{ summary.balance|money }}</strong><span>Recebido menos gastos já pagos</span></div>
-    <a class="finance-summary-card pending finance-summary-link" href="{{ url_for('finance', month=summary.month_value, start=summary.month_start.isoformat(), end=summary.month_end.isoformat(), type='income', status='pending', focus='receivable', _anchor='finance-pending-details') }}" aria-label="Ver exatamente o que há para receber"><small>{% if summary.is_current_month %}A receber previsto{% else %}A receber{% endif %}</small><strong>{{ summary.receivable|money }}</strong><span>Entradas pendentes até {{ summary.month_end|datebr }} · Toque para ver</span></a>
-    <a class="finance-summary-card payable finance-summary-link" href="{{ url_for('finance', month=summary.month_value, start=summary.month_start.isoformat(), end=summary.month_end.isoformat(), type='expense', status='pending', focus='payable', _anchor='finance-pending-details') }}" aria-label="Ver exatamente o que há para pagar"><small>{% if summary.is_current_month %}A pagar previsto{% else %}A pagar{% endif %}</small><strong>{{ summary.payable|money }}</strong><span>Despesas pendentes até {{ summary.month_end|datebr }} · Toque para ver</span></a>
-    <div class="finance-summary-card forecast"><small>Saldo previsto</small><strong>{{ summary.forecast_balance|money }}</strong><span>Caixa + a receber − a pagar</span></div>
+  <div class="finance-result-strip">
+    <a class="finance-summary-card billed finance-summary-link" href="{{ url_for('finance', month=summary.month_value, start=summary.month_start.isoformat(), end=summary.month_end.isoformat(), focus='billed', _anchor='finance-focus-details') }}">
+      <small>Faturado no mês</small><strong>{{ summary.billed|money }}</strong><span>Soma dos serviços do mês · Toque para conferir</span>
+    </a>
+    <a class="finance-summary-card expense finance-summary-link" href="{{ url_for('finance', month=summary.month_value, start=summary.month_start.isoformat(), end=summary.month_end.isoformat(), focus='expenses', _anchor='finance-focus-details') }}">
+      <small>Gastos do mês</small><strong>{{ summary.expenses|money }}</strong><span>Pagos + a pagar · Toque para conferir</span>
+    </a>
+    <a class="finance-summary-card profit finance-summary-link" href="{{ url_for('finance', month=summary.month_value, start=summary.month_start.isoformat(), end=summary.month_end.isoformat(), focus='profit', _anchor='finance-focus-details') }}">
+      <small>Lucro do mês</small><strong>{{ summary.profit|money }}</strong><span>Faturado − gastos · Toque para conferir</span>
+    </a>
+  </div>
+
+  <div class="finance-summary-grid finance-cash-grid">
+    <a class="finance-summary-card received finance-summary-link" href="{{ url_for('finance', month=summary.month_value, start=summary.month_start.isoformat(), end=summary.month_end.isoformat(), focus='received', _anchor='finance-focus-details') }}">
+      <small>Recebido dos serviços</small><strong>{{ summary.received|money }}</strong><span>Valor já recebido dos serviços deste mês · Toque para ver</span>
+    </a>
+    <a class="finance-summary-card pending finance-summary-link" href="{{ url_for('finance', month=summary.month_value, start=summary.month_start.isoformat(), end=summary.month_end.isoformat(), focus='receivable', _anchor='finance-focus-details') }}">
+      <small>A receber</small><strong>{{ summary.receivable|money }}</strong><span>Restante dos serviços deste mês · Toque para ver</span>
+    </a>
+    <a class="finance-summary-card payable finance-summary-link" href="{{ url_for('finance', month=summary.month_value, start=summary.month_start.isoformat(), end=summary.month_end.isoformat(), focus='payable', _anchor='finance-focus-details') }}">
+      <small>A pagar</small><strong>{{ summary.payable|money }}</strong><span>Despesas do mês ainda pendentes · Toque para ver</span>
+    </a>
+    <a class="finance-summary-card balance finance-summary-link" href="{{ url_for('finance', month=summary.month_value, start=summary.month_start.isoformat(), end=summary.month_end.isoformat(), focus='balance', _anchor='finance-focus-details') }}">
+      <small>Caixa realizado</small><strong>{{ summary.balance|money }}</strong><span>Recebido − gastos já pagos · Toque para ver</span>
+    </a>
+  </div>
+
+  <div class="finance-check-line">
+    <strong>Conferência:</strong>
+    <span>{{ summary.billed|money }} faturado − {{ summary.expenses|money }} em gastos = <b>{{ summary.profit|money }} de lucro</b>.</span>
+    {% if summary.manual_income > 0 %}<span class="finance-check-note">Há {{ summary.manual_income|money }} em recebimentos avulsos, mostrados nos lançamentos abaixo e não somados ao faturamento dos serviços.</span>{% endif %}
   </div>
 
   <div class="finance-breakdown-grid">
     <div class="finance-breakdown-card">
-      <div class="finance-breakdown-title"><strong>Onde mais gastou</strong><span>{{ summary.expense_categories|length }} categoria(s)</span></div>
+      <div class="finance-breakdown-title"><strong>Gastos por categoria</strong><span>{{ summary.expense_categories|length }} categoria(s)</span></div>
       <div class="finance-category-list">
-        {% for category, amount in summary.expense_categories[:6] %}
+        {% for category, amount in summary.expense_categories[:8] %}
         <div class="finance-category-row"><span>{{ category }}</span><strong>{{ amount|money }}</strong></div>
         {% else %}<div class="empty">Nenhum gasto lançado neste mês.</div>{% endfor %}
       </div>
     </div>
     <div class="finance-breakdown-card">
-      <div class="finance-breakdown-title"><strong>Entradas por categoria</strong><span>{{ summary.income_categories|length }} categoria(s)</span></div>
+      <div class="finance-breakdown-title"><strong>Situação dos serviços</strong><span>{{ summary.services|length }} serviço(s)</span></div>
       <div class="finance-category-list">
-        {% for category, amount in summary.income_categories[:6] %}
-        <div class="finance-category-row"><span>{{ category }}</span><strong>{{ amount|money }}</strong></div>
-        {% else %}<div class="empty">Nenhuma entrada lançada neste mês.</div>{% endfor %}
+        <div class="finance-category-row"><span>Faturado</span><strong>{{ summary.billed|money }}</strong></div>
+        <div class="finance-category-row"><span>Já recebido</span><strong>{{ summary.received|money }}</strong></div>
+        <div class="finance-category-row"><span>Falta receber</span><strong>{{ summary.receivable|money }}</strong></div>
       </div>
     </div>
   </div>
 </section>
 
 {% if focus %}
-<section class="finance-pending-panel" id="finance-pending-details">
+<section class="finance-pending-panel" id="finance-focus-details">
   <div class="finance-pending-head">
     <div>
-      <div class="finance-month-kicker">{{ 'CONTAS A RECEBER' if focus == 'receivable' else 'CONTAS A PAGAR' }}</div>
-      <h2>{{ 'O que falta receber' if focus == 'receivable' else 'O que falta pagar' }}</h2>
-      <p>{{ summary.month_label }} · estes lançamentos formam exatamente o valor mostrado no card.</p>
+      <div class="finance-month-kicker">
+        {% if focus == 'billed' %}SERVIÇOS FATURADOS
+        {% elif focus == 'received' %}VALORES JÁ RECEBIDOS
+        {% elif focus == 'expenses' %}GASTOS DO MÊS
+        {% elif focus == 'balance' %}COMPOSIÇÃO DO CAIXA
+        {% elif focus == 'receivable' %}CONTAS A RECEBER
+        {% elif focus == 'payable' %}CONTAS A PAGAR
+        {% else %}COMPOSIÇÃO DO LUCRO{% endif %}
+      </div>
+      <h2>
+        {% if focus == 'billed' %}O que formou o faturamento
+        {% elif focus == 'received' %}O que já foi recebido
+        {% elif focus == 'expenses' %}O que formou os gastos
+        {% elif focus == 'balance' %}Entradas recebidas e saídas pagas
+        {% elif focus == 'receivable' %}O que ainda falta receber
+        {% elif focus == 'payable' %}O que ainda falta pagar
+        {% else %}Faturamento menos gastos{% endif %}
+      </h2>
+      <p>{{ summary.month_label }} · os itens abaixo formam exatamente o valor mostrado no card.</p>
     </div>
-    <div class="finance-pending-total">
-      <span>Total</span>
-      <strong>{{ focus_total|money }}</strong>
-    </div>
+    <div class="finance-pending-total"><span>Total</span><strong>{{ focus_total|money }}</strong></div>
   </div>
 
+  {% if focus_service_rows %}
+  <div class="finance-focus-subtitle">Serviços</div>
+  <div class="finance-pending-list">
+    {% for row in focus_service_rows %}
+    {% set s = row.service %}
+    <div class="finance-pending-row">
+      <div class="finance-pending-main">
+        <div class="finance-pending-topline"><span class="badge {{ s.status }}">{{ status_labels.get(s.status, s.status) }}</span><span class="muted">{{ s.service_date|datebr }}</span></div>
+        <strong>#{{ s.id }} · {{ s.title }}</strong>
+        <div class="finance-pending-party">Cliente: {{ s.client.name }} · {{ row.kind }}</div>
+      </div>
+      <div class="finance-pending-side">
+        <strong class="finance-pending-value">{% if focus == 'balance' %}+ {% endif %}{{ row.amount|money }}</strong>
+        <div class="actions"><a class="btn sm" href="{{ url_for('service_detail', service_id=s.id) }}">Abrir serviço</a></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if focus_entries %}
+  <div class="finance-focus-subtitle">{% if focus == 'profit' %}Gastos descontados{% elif focus == 'balance' %}Saídas pagas{% else %}Lançamentos{% endif %}</div>
   <div class="finance-pending-list">
     {% for e in focus_entries %}
     {% set team_expense = focus_team_expenses.get(e.id) %}
     <div class="finance-pending-row">
       <div class="finance-pending-main">
         <div class="finance-pending-topline">
-          <span class="badge pending">Pendente</span>
+          <span class="badge {{ e.status }}">{{ 'Pago' if e.status=='paid' else 'A pagar' }}</span>
           <span class="muted">{{ e.due_date|datebr }}</span>
         </div>
         <strong>{{ e.description }}</strong>
         <div class="finance-pending-party">
-          {% if team_expense and team_expense.employee %}
-            Ajudante: {{ team_expense.employee.name }}
-          {% elif e.client %}
-            Cliente: {{ e.client.name }}
-          {% elif e.service and e.service.client %}
-            Cliente: {{ e.service.client.name }}
-          {% else %}
-            {{ e.category or 'Lançamento financeiro' }}
-          {% endif %}
+          {% if team_expense and team_expense.employee %}Ajudante: {{ team_expense.employee.name }}{% elif e.service and e.service.client %}Cliente: {{ e.service.client.name }}{% else %}{{ e.category or 'Gasto' }}{% endif %}
           {% if e.service %} · Serviço #{{ e.service.id }}{% endif %}
         </div>
       </div>
       <div class="finance-pending-side">
-        <strong class="finance-pending-value">{{ e.amount|money }}</strong>
+        <strong class="finance-pending-value">{% if focus in ['balance','profit'] %}− {% endif %}{{ e.amount|money }}</strong>
         <div class="actions">
           {% if e.service_id %}<a class="btn sm" href="{{ url_for('service_detail', service_id=e.service_id) }}">Abrir serviço</a>{% endif %}
           {% if team_expense and team_expense.employee %}<a class="btn sm" href="{{ url_for('employee_detail', employee_id=team_expense.employee_id, start=summary.month_start.isoformat(), end=summary.month_end.isoformat()) }}">Ver ajudante</a>{% endif %}
-          <form method="post" action="{{ url_for('finance_toggle', entry_id=e.id) }}"><button class="btn sm success" type="submit">{{ 'Marcar recebido' if focus == 'receivable' else 'Marcar pago' }}</button></form>
-          <a class="btn sm" href="{{ url_for('finance_edit', entry_id=e.id) }}">Editar</a>
+          {% if e.status == 'pending' %}<form method="post" action="{{ url_for('finance_toggle', entry_id=e.id) }}"><button class="btn sm success" type="submit">Marcar pago</button></form>{% endif %}
+          {% if not e.service_id and not team_expense %}<a class="btn sm" href="{{ url_for('finance_edit', entry_id=e.id) }}">Editar</a>{% endif %}
         </div>
       </div>
     </div>
-    {% else %}
-    <div class="finance-pending-empty">
-      <strong>{{ 'Nada para receber neste mês.' if focus == 'receivable' else 'Nada para pagar neste mês.' }}</strong>
-      <span>O card está zerado porque não existem lançamentos pendentes nesse período.</span>
-    </div>
     {% endfor %}
   </div>
+  {% endif %}
 
-  <div class="finance-pending-footer">
-    <a class="btn" href="{{ url_for('finance', month=summary.month_value, start=summary.month_start.isoformat(), end=summary.month_end.isoformat()) }}">← Voltar ao financeiro completo</a>
-  </div>
+  {% if not focus_service_rows and not focus_entries %}
+  <div class="finance-pending-empty"><strong>Nenhum item neste card.</strong><span>Não existem valores que componham esse total no mês selecionado.</span></div>
+  {% endif %}
+
+  <div class="finance-pending-footer"><a class="btn" href="{{ url_for('finance', month=summary.month_value, start=summary.month_start.isoformat(), end=summary.month_end.isoformat()) }}">← Voltar ao financeiro</a></div>
 </section>
 {% endif %}
 
-<div class="grid stats finance-period-stats">
-  <div class="stat"><div class="label">Recebido no período</div><div class="value">{{ paid_income|money }}</div></div>
-  <div class="stat"><div class="label">A receber no período</div><div class="value">{{ pending_income|money }}</div></div>
-  <div class="stat"><div class="label">Gastos pagos no período</div><div class="value">{{ paid_expense|money }}</div></div>
-  <div class="stat"><div class="label">A pagar no período</div><div class="value">{{ pending_expense|money }}</div></div>
-  <div class="stat"><div class="label">Saldo realizado</div><div class="value">{{ (paid_income-paid_expense)|money }}</div></div>
-  <div class="stat"><div class="label">Saldo previsto</div><div class="value">{{ (paid_income+pending_income-paid_expense-pending_expense)|money }}</div></div>
-</div>
-
-<div class="toolbar finance-filter-bar">
-  <form method="get">
-    <input type="hidden" name="month" value="{{ summary.month_value }}">
-    <input class="input" type="date" name="start" value="{{ start.isoformat() }}">
-    <input class="input" type="date" name="end" value="{{ end.isoformat() }}">
-    <select class="select" name="type"><option value="">Entradas e gastos</option><option value="income" {% if type_filter=='income' %}selected{% endif %}>Entradas</option><option value="expense" {% if type_filter=='expense' %}selected{% endif %}>Gastos</option></select>
-    <select class="select" name="status"><option value="">Todos</option><option value="paid" {% if status_filter=='paid' %}selected{% endif %}>Pago / recebido</option><option value="pending" {% if status_filter=='pending' %}selected{% endif %}>Pendente</option></select>
-    <button class="btn" type="submit">Ver período</button>
-  </form>
-</div>
-
-<div class="card">
-  <div class="card-head"><h2>Lançamentos</h2><span class="muted">{{ start|datebr }} até {{ end|datebr }}</span></div>
+<div class="card finance-ledger-card">
+  <div class="card-head">
+    <div><h2>Lançamentos individuais</h2><span class="muted">Use esta lista para entradas/gastos avulsos e baixas. O fechamento acima é calculado diretamente dos serviços + gastos.</span></div>
+  </div>
+  <div class="toolbar finance-filter-bar">
+    <form method="get">
+      <input type="hidden" name="month" value="{{ summary.month_value }}">
+      <input class="input" type="date" name="start" value="{{ start.isoformat() }}">
+      <input class="input" type="date" name="end" value="{{ end.isoformat() }}">
+      <select class="select" name="type"><option value="">Entradas e gastos</option><option value="income" {% if type_filter=='income' %}selected{% endif %}>Entradas</option><option value="expense" {% if type_filter=='expense' %}selected{% endif %}>Gastos</option></select>
+      <select class="select" name="status"><option value="">Todos</option><option value="paid" {% if status_filter=='paid' %}selected{% endif %}>Pago / recebido</option><option value="pending" {% if status_filter=='pending' %}selected{% endif %}>Pendente</option></select>
+      <button class="btn" type="submit">Ver período</button>
+    </form>
+  </div>
   <div class="table-wrap"><table class="table"><thead><tr><th>Data</th><th>Descrição</th><th>Cliente</th><th>Tipo</th><th>Status</th><th>Valor</th><th>Ações</th></tr></thead><tbody>
     {% for e in entries %}
     <tr>
-      <td>{{ e.due_date|datebr }}{% if e.paid_date %}<div class="muted">Movimentado {{ e.paid_date|datebr }}</div>{% endif %}</td>
+      <td>{{ e.due_date|datebr }}{% if e.paid_date %}<div class="muted">Baixa {{ e.paid_date|datebr }}</div>{% endif %}</td>
       <td>{{ e.description }}{% if e.category %}<div class="muted">{{ e.category }}</div>{% endif %}</td>
-      <td>{{ e.client.name if e.client else '—' }}</td>
+      <td>{{ e.client.name if e.client else (e.service.client.name if e.service and e.service.client else '—') }}</td>
       <td><span class="badge {{ 'completed' if e.type=='income' else 'rejected' }}">{{ 'Entrada' if e.type=='income' else 'Gasto' }}</span></td>
       <td><span class="badge {{ e.status }}">{{ 'Pago / recebido' if e.status=='paid' else 'Pendente' }}</span></td>
       <td class="money">{{ e.amount|money }}</td>
-      <td><div class="actions"><form method="post" action="{{ url_for('finance_toggle', entry_id=e.id) }}"><button class="btn sm {{ 'danger' if e.status=='paid' else 'success' }}" type="submit">{{ 'Voltar pendente' if e.status=='paid' else 'Dar baixa' }}</button></form><a class="btn sm" href="{{ url_for('finance_edit', entry_id=e.id) }}">Editar</a>{% if not e.service_id %}<form method="post" action="{{ url_for('finance_delete', entry_id=e.id) }}" onsubmit="return confirmDelete('Excluir este lançamento? Se ele vier da equipe, o sistema vai direcionar você para o ajudante.')"><button class="btn sm danger" type="submit">Excluir</button></form>{% endif %}</div></td>
+      <td><div class="actions"><form method="post" action="{{ url_for('finance_toggle', entry_id=e.id) }}"><button class="btn sm {{ 'danger' if e.status=='paid' else 'success' }}" type="submit">{{ 'Voltar pendente' if e.status=='paid' else 'Dar baixa' }}</button></form><a class="btn sm" href="{{ url_for('finance_edit', entry_id=e.id) }}">Editar</a>{% if not e.service_id %}<form method="post" action="{{ url_for('finance_delete', entry_id=e.id) }}" onsubmit="return confirmDelete('Excluir este lançamento?')"><button class="btn sm danger" type="submit">Excluir</button></form>{% endif %}</div></td>
     </tr>
     {% else %}<tr><td colspan="7"><div class="empty">Nenhum lançamento neste período.</div></td></tr>{% endfor %}
   </tbody></table></div>

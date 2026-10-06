@@ -1024,14 +1024,20 @@ def repair_service_income_entries():
 
 
 def repair_financial_history():
-    """Reconcilia histórico financeiro antigo sem duplicar lançamentos."""
+    """Reconcilia o financeiro a partir das fontes reais do sistema.
+
+    Serviços são a fonte de verdade para faturamento/recebimento e os registros
+    da equipe são a fonte de verdade para custos do ajudante. A rotina pode ser
+    executada em todo redeploy sem duplicar lançamentos.
+    """
     repaired_services = 0
     repaired_expenses = 0
     repaired_dates = 0
 
-    # Serviços antigos: transforma amount_paid salvo no serviço em entradas pagas
-    # e deixa somente o saldo restante como A receber.
+    # Primeiro recalcula o total de cada serviço. Versões antigas podiam ter o
+    # valor combinado salvo em labor_value, mas total_value ainda desatualizado.
     for service in Service.query.order_by(Service.id.asc()).all():
+        sync_service_total(service)
         total = Decimal(service.total_value or 0)
         paid = Decimal(service.amount_paid or 0)
         linked_entries = FinanceEntry.query.filter_by(service_id=service.id, type="income").all()
@@ -1053,6 +1059,8 @@ def repair_financial_history():
         sync_service_helper_expenses(service)
         repaired_services += 1
 
+    db.session.flush()
+    deduped_helper_expenses = reconcile_duplicate_helper_expenses()
     db.session.flush()
 
     # Gastos antigos da equipe: religa ao Financeiro e evita criar duplicata quando
@@ -1085,10 +1093,10 @@ def repair_financial_history():
 
     db.session.commit()
     app.logger.info(
-        "Reconciliação financeira: %s serviços, %s gastos de equipe, %s datas corrigidas.",
-        repaired_services, repaired_expenses, repaired_dates,
+        "Reconciliação financeira: %s serviços, %s gastos de equipe, %s duplicidades de ajudante removidas, %s datas corrigidas.",
+        repaired_services, repaired_expenses, deduped_helper_expenses, repaired_dates,
     )
-    return repaired_services, repaired_expenses, repaired_dates
+    return repaired_services, repaired_expenses, deduped_helper_expenses, repaired_dates
 
 
 # -------------------- Auth / setup --------------------
@@ -2675,43 +2683,71 @@ def parse_month_value(value):
 
 
 def get_finance_month_summary(month_value=None):
+    """Fechamento mensal por competência, usando o cadastro real como fonte.
+
+    - Faturamento/recebimento vêm dos Serviços do mês (service_date).
+    - Gastos vêm das despesas lançadas para o mês (due_date).
+    - FinanceEntry deixa de ser a única fonte do faturamento, evitando sumiços
+      quando uma sincronização antiga falhou.
+    """
     month_start, next_month, month_value, month_label = parse_month_value(month_value)
     today = local_today()
     month_end = next_month - timedelta(days=1)
     is_current_month = month_start.year == today.year and month_start.month == today.month
     is_future_month = month_start > today.replace(day=1)
 
-    paid_entries = FinanceEntry.query.filter(
-        FinanceEntry.status == "paid",
-        or_(
-            (FinanceEntry.paid_date >= month_start) & (FinanceEntry.paid_date < next_month),
-            (FinanceEntry.paid_date.is_(None)) & (FinanceEntry.due_date >= month_start) & (FinanceEntry.due_date < next_month),
-        ),
-    ).order_by(FinanceEntry.paid_date.asc().nullsfirst(), FinanceEntry.due_date.asc(), FinanceEntry.id.asc()).all()
+    services = Service.query.filter(
+        Service.service_date >= month_start,
+        Service.service_date < next_month,
+        Service.status != "cancelled",
+    ).order_by(Service.service_date.asc(), Service.id.asc()).all()
 
-    pending_entries = FinanceEntry.query.filter(
-        FinanceEntry.type == "income",
-        FinanceEntry.status == "pending",
-        FinanceEntry.due_date >= month_start,
-        FinanceEntry.due_date < next_month,
-    ).order_by(FinanceEntry.due_date.asc(), FinanceEntry.id.asc()).all()
+    service_rows = []
+    billed = Decimal("0")
+    received = Decimal("0")
+    receivable = Decimal("0")
+    for service in services:
+        total = max(Decimal("0"), Decimal(service.total_value or 0))
+        paid = min(total, max(Decimal("0"), Decimal(service.amount_paid or 0)))
+        remaining = max(Decimal("0"), total - paid)
+        service_rows.append({
+            "service": service,
+            "total": total,
+            "received": paid,
+            "receivable": remaining,
+        })
+        billed += total
+        received += paid
+        receivable += remaining
 
-    pending_expense_entries = FinanceEntry.query.filter(
+    # Custos são contabilizados pelo mês em que foram lançados/gerados. Inclui
+    # pagos e pendentes para que o lucro do serviço não esconda uma conta a pagar.
+    all_expense_entries = FinanceEntry.query.filter(
         FinanceEntry.type == "expense",
-        FinanceEntry.status == "pending",
         FinanceEntry.due_date >= month_start,
         FinanceEntry.due_date < next_month,
     ).order_by(FinanceEntry.due_date.asc(), FinanceEntry.id.asc()).all()
+    expense_entries = [x for x in all_expense_entries if x.status == "paid"]
+    pending_expense_entries = [x for x in all_expense_entries if x.status == "pending"]
 
-    income_entries = [x for x in paid_entries if x.type == "income"]
-    expense_entries = [x for x in paid_entries if x.type == "expense"]
-
-    received = sum((Decimal(x.amount or 0) for x in income_entries), Decimal("0"))
-    expenses = sum((Decimal(x.amount or 0) for x in expense_entries), Decimal("0"))
-    receivable = sum((Decimal(x.amount or 0) for x in pending_entries), Decimal("0"))
+    expenses_paid = sum((Decimal(x.amount or 0) for x in expense_entries), Decimal("0"))
     payable = sum((Decimal(x.amount or 0) for x in pending_expense_entries), Decimal("0"))
-    balance = received - expenses
-    forecast_balance = balance + receivable - payable
+    expenses = expenses_paid + payable
+    profit = billed - expenses
+    cash_balance = received - expenses_paid
+    forecast_balance = received + receivable - expenses
+
+    # Mantém as entradas avulsas visíveis para conferência, sem misturá-las ao
+    # faturamento dos serviços. Assim o fechamento dos serviços sempre bate com
+    # o que foi cadastrado no mês.
+    manual_income_entries = FinanceEntry.query.filter(
+        FinanceEntry.type == "income",
+        FinanceEntry.service_id.is_(None),
+        FinanceEntry.status == "paid",
+        FinanceEntry.due_date >= month_start,
+        FinanceEntry.due_date < next_month,
+    ).order_by(FinanceEntry.due_date.asc(), FinanceEntry.id.asc()).all()
+    manual_income = sum((Decimal(x.amount or 0) for x in manual_income_entries), Decimal("0"))
 
     def grouped_categories(entries, default_label):
         grouped = {}
@@ -2723,8 +2759,7 @@ def get_finance_month_summary(month_value=None):
             grouped[key] = grouped.get(key, Decimal("0")) + Decimal(entry.amount or 0)
         return sorted(((labels[key], amount) for key, amount in grouped.items()), key=lambda item: item[1], reverse=True)
 
-    expense_categories = grouped_categories(expense_entries, "Outros")
-    income_categories = grouped_categories(income_entries, "Serviços / Outros")
+    expense_categories = grouped_categories(all_expense_entries, "Outros")
 
     return {
         "month_start": month_start,
@@ -2735,40 +2770,39 @@ def get_finance_month_summary(month_value=None):
         "today": today,
         "is_current_month": is_current_month,
         "is_future_month": is_future_month,
+        "services": services,
+        "service_rows": service_rows,
+        "billed": billed,
         "received": received,
-        "expenses": expenses,
-        "balance": balance,
         "receivable": receivable,
+        "expenses": expenses,
+        "expenses_paid": expenses_paid,
         "payable": payable,
+        "profit": profit,
+        "balance": cash_balance,
         "forecast_balance": forecast_balance,
-        "income_entries": income_entries,
         "expense_entries": expense_entries,
-        "pending_entries": pending_entries,
+        "all_expense_entries": all_expense_entries,
         "pending_expense_entries": pending_expense_entries,
+        "manual_income_entries": manual_income_entries,
+        "manual_income": manual_income,
         "expense_categories": expense_categories,
-        "income_categories": income_categories,
     }
-
 
 def build_finance_month_pdf(summary):
     settings = get_settings()
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        rightMargin=14 * mm,
-        leftMargin=14 * mm,
-        topMargin=14 * mm,
-        bottomMargin=14 * mm,
+        buffer, pagesize=A4, rightMargin=12 * mm, leftMargin=12 * mm,
+        topMargin=12 * mm, bottomMargin=12 * mm,
         title=f"Resumo financeiro - {summary['month_label']}",
         author=settings.business_name or "Guilherme Elétrica e Climatização",
     )
-
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="FinTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=18, leading=22, textColor=colors.HexColor("#0F172A")))
-    styles.add(ParagraphStyle(name="FinSection", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=11, leading=14, spaceBefore=5, spaceAfter=6, textColor=colors.HexColor("#0F172A")))
-    styles.add(ParagraphStyle(name="FinBody", parent=styles["BodyText"], fontSize=9.5, leading=13, textColor=colors.HexColor("#1F2937")))
-    styles.add(ParagraphStyle(name="FinSmall", parent=styles["BodyText"], fontSize=8.5, leading=11, textColor=colors.HexColor("#64748B")))
+    styles.add(ParagraphStyle(name="FinSection", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=11, leading=14, spaceBefore=6, spaceAfter=6, textColor=colors.HexColor("#0F172A")))
+    styles.add(ParagraphStyle(name="FinBody", parent=styles["BodyText"], fontSize=8.5, leading=11, textColor=colors.HexColor("#1F2937")))
+    styles.add(ParagraphStyle(name="FinSmall", parent=styles["BodyText"], fontSize=8, leading=10, textColor=colors.HexColor("#64748B")))
     styles.add(ParagraphStyle(name="FinRight", parent=styles["BodyText"], fontSize=9, leading=12, alignment=TA_RIGHT, textColor=colors.HexColor("#475569")))
 
     story = []
@@ -2780,173 +2814,99 @@ def build_finance_month_pdf(summary):
         left.append(RLImage(logo_path, width=68 * mm, height=22 * mm))
     else:
         left.append(Paragraph(xml_escape(settings.business_name or "Guilherme Elétrica e Climatização"), styles["FinTitle"]))
-    meta_bits = [x for x in [settings.phone, settings.city] if x]
-    if meta_bits:
-        left.append(Paragraph(xml_escape(" · ".join(meta_bits)), styles["FinSmall"]))
-    right = Paragraph(f"<b>RESUMO FINANCEIRO</b><br/>{xml_escape(summary['month_label'])}", styles["FinRight"])
-    header = Table([[left, right]], colWidths=[118 * mm, 62 * mm])
-    header.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LINEBELOW", (0, 0), (-1, -1), 1.5, colors.HexColor("#0F172A")),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-    ]))
-    story.extend([header, Spacer(1, 6 * mm)])
+    right = Paragraph(f"<b>FECHAMENTO FINANCEIRO</b><br/>{xml_escape(summary['month_label'])}", styles["FinRight"])
+    header = Table([[left, right]], colWidths=[122 * mm, 62 * mm])
+    header.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "TOP"), ("LINEBELOW", (0,0), (-1,-1), 1.5, colors.HexColor("#0F172A")), ("BOTTOMPADDING", (0,0), (-1,-1), 8)]))
+    story.extend([header, Spacer(1, 5 * mm)])
 
-    metrics = [
-        ["Recebido", "Gastos", "Saldo", "A receber"],
-        [money(summary["received"]), money(summary["expenses"]), money(summary["balance"]), money(summary["receivable"])],
+    main_metrics = [
+        ["Faturado", "Gastos do mês", "Lucro do mês"],
+        [money(summary["billed"]), money(summary["expenses"]), money(summary["profit"])],
     ]
-    metrics_table = Table(metrics, colWidths=[45 * mm] * 4)
-    metrics_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, 0), 8.5),
-        ("FONTSIZE", (0, 1), (-1, 1), 12),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("GRID", (0, 0), (-1, -1), .5, colors.HexColor("#CBD5E1")),
-        ("BACKGROUND", (0, 1), (0, 1), colors.HexColor("#ECFDF5")),
-        ("BACKGROUND", (1, 1), (1, 1), colors.HexColor("#FFF1F2")),
-        ("BACKGROUND", (2, 1), (2, 1), colors.HexColor("#EFF6FF")),
-        ("BACKGROUND", (3, 1), (3, 1), colors.HexColor("#FFFBEB")),
-        ("TOPPADDING", (0, 0), (-1, -1), 7),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    t = Table(main_metrics, colWidths=[61.3 * mm] * 3)
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0F172A")), ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("FONTNAME", (0,0), (-1,-1), "Helvetica-Bold"), ("FONTSIZE", (0,0), (-1,0), 8.5), ("FONTSIZE", (0,1), (-1,1), 13),
+        ("ALIGN", (0,0), (-1,-1), "CENTER"), ("GRID", (0,0), (-1,-1), .5, colors.HexColor("#CBD5E1")),
+        ("BACKGROUND", (0,1), (0,1), colors.HexColor("#EFF6FF")), ("BACKGROUND", (1,1), (1,1), colors.HexColor("#FFF1F2")),
+        ("BACKGROUND", (2,1), (2,1), colors.HexColor("#ECFDF5")), ("TOPPADDING", (0,0), (-1,-1), 7), ("BOTTOMPADDING", (0,0), (-1,-1), 7),
     ]))
-    story.extend([metrics_table, Spacer(1, 3 * mm)])
+    story.extend([t, Spacer(1, 3 * mm)])
 
-    forecast_metrics = [
-        ["A pagar", "Saldo previsto"],
-        [money(summary["payable"]), money(summary["forecast_balance"])],
+    cash_metrics = [
+        ["Recebido", "A receber", "A pagar"],
+        [money(summary["received"]), money(summary["receivable"]), money(summary["payable"])],
     ]
-    forecast_table = Table(forecast_metrics, colWidths=[90 * mm, 90 * mm])
-    forecast_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, 0), 8.5),
-        ("FONTSIZE", (0, 1), (-1, 1), 12),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("GRID", (0, 0), (-1, -1), .5, colors.HexColor("#CBD5E1")),
-        ("BACKGROUND", (0, 1), (0, 1), colors.HexColor("#FFF7ED")),
-        ("BACKGROUND", (1, 1), (1, 1), colors.HexColor("#F0FDF4")),
-        ("TOPPADDING", (0, 0), (-1, -1), 7),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    t2 = Table(cash_metrics, colWidths=[61.3 * mm] * 3)
+    t2.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#334155")), ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("FONTNAME", (0,0), (-1,-1), "Helvetica-Bold"), ("FONTSIZE", (0,0), (-1,0), 8), ("FONTSIZE", (0,1), (-1,1), 11),
+        ("ALIGN", (0,0), (-1,-1), "CENTER"), ("GRID", (0,0), (-1,-1), .5, colors.HexColor("#CBD5E1")),
+        ("TOPPADDING", (0,0), (-1,-1), 6), ("BOTTOMPADDING", (0,0), (-1,-1), 6),
     ]))
-    story.extend([forecast_table, Spacer(1, 6 * mm)])
+    story.extend([t2, Spacer(1, 6 * mm)])
 
-    story.append(Paragraph("Gastos por categoria", styles["FinSection"]))
-    cat_data = [["Categoria", "Valor", "% dos gastos"]]
-    if summary["expense_categories"]:
-        for category, amount in summary["expense_categories"]:
-            pct = (Decimal(amount) / Decimal(summary["expenses"]) * Decimal("100")) if summary["expenses"] else Decimal("0")
-            cat_data.append([Paragraph(xml_escape(category), styles["FinBody"]), money(amount), f"{pct.quantize(Decimal('0.1'))}%"])
-    else:
-        cat_data.append(["Nenhum gasto lançado", "R$ 0,00", "0%"])
-    cat_table = Table(cat_data, colWidths=[100 * mm, 45 * mm, 35 * mm], repeatRows=1)
-    cat_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
-        ("GRID", (0, 0), (-1, -1), .4, colors.HexColor("#CBD5E1")),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    story.append(Paragraph("Serviços do mês", styles["FinSection"]))
+    service_data = [["Data", "Cliente / serviço", "Total", "Recebido", "A receber"]]
+    for row in summary["service_rows"]:
+        service = row["service"]
+        service_data.append([
+            service.service_date.strftime("%d/%m/%Y"),
+            Paragraph(xml_escape(f"{service.client.name} · #{service.id} {service.title}"), styles["FinBody"]),
+            money(row["total"]), money(row["received"]), money(row["receivable"]),
+        ])
+    if len(service_data) == 1:
+        service_data.append(["-", "Nenhum serviço no mês", "R$ 0,00", "R$ 0,00", "R$ 0,00"])
+    st = Table(service_data, colWidths=[24*mm, 76*mm, 28*mm, 28*mm, 28*mm], repeatRows=1)
+    st.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0F172A")), ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("FONTSIZE", (0,0), (-1,-1), 8), ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("ALIGN", (2,0), (-1,-1), "RIGHT"), ("GRID", (0,0), (-1,-1), .35, colors.HexColor("#CBD5E1")),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#F8FAFC")]), ("TOPPADDING", (0,0), (-1,-1), 5), ("BOTTOMPADDING", (0,0), (-1,-1), 5),
     ]))
-    story.extend([cat_table, Spacer(1, 6 * mm)])
+    story.extend([st, Spacer(1, 6 * mm)])
 
-    story.append(Paragraph("Movimentações do mês", styles["FinSection"]))
-    movement_data = [["Data", "Descrição", "Tipo", "Categoria", "Valor"]]
-    movements = sorted(
-        summary["income_entries"] + summary["expense_entries"],
-        key=lambda x: ((x.paid_date or x.due_date), x.id),
-    )
-    for entry in movements:
-        movement_data.append([
-            (entry.paid_date or entry.due_date).strftime("%d/%m/%Y"),
-            Paragraph(xml_escape(entry.description or "Lançamento"), styles["FinBody"]),
-            "Entrada" if entry.type == "income" else "Gasto",
+    story.append(Paragraph("Gastos do mês", styles["FinSection"]))
+    expense_data = [["Data", "Descrição", "Status", "Categoria", "Valor"]]
+    for entry in summary["all_expense_entries"]:
+        expense_data.append([
+            entry.due_date.strftime("%d/%m/%Y"),
+            Paragraph(xml_escape(entry.description or "Gasto"), styles["FinBody"]),
+            "Pago" if entry.status == "paid" else "A pagar",
             Paragraph(xml_escape((entry.category or "Outros").strip() or "Outros"), styles["FinBody"]),
             money(entry.amount),
         ])
-    if len(movement_data) == 1:
-        movement_data.append(["-", "Nenhuma movimentação paga/recebida", "-", "-", "R$ 0,00"])
-    movement_table = Table(movement_data, colWidths=[25 * mm, 72 * mm, 25 * mm, 34 * mm, 24 * mm], repeatRows=1)
-    movement_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 8.3),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ALIGN", (-1, 0), (-1, -1), "RIGHT"),
-        ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#CBD5E1")),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    if len(expense_data) == 1:
+        expense_data.append(["-", "Nenhum gasto no mês", "-", "-", "R$ 0,00"])
+    et = Table(expense_data, colWidths=[24*mm, 76*mm, 25*mm, 35*mm, 24*mm], repeatRows=1)
+    et.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0F172A")), ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("FONTSIZE", (0,0), (-1,-1), 8), ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("ALIGN", (-1,0), (-1,-1), "RIGHT"), ("GRID", (0,0), (-1,-1), .35, colors.HexColor("#CBD5E1")),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#F8FAFC")]), ("TOPPADDING", (0,0), (-1,-1), 5), ("BOTTOMPADDING", (0,0), (-1,-1), 5),
     ]))
-    story.extend([movement_table, Spacer(1, 5 * mm)])
+    story.extend([et, Spacer(1, 5 * mm)])
 
-    if summary["pending_entries"]:
-        story.append(Paragraph("Valores a receber", styles["FinSection"]))
-        pending_data = [["Vencimento", "Descrição", "Cliente", "Valor"]]
-        for entry in summary["pending_entries"]:
-            pending_data.append([
-                entry.due_date.strftime("%d/%m/%Y"),
-                Paragraph(xml_escape(entry.description or "A receber"), styles["FinBody"]),
-                Paragraph(xml_escape(entry.client.name if entry.client else "-"), styles["FinBody"]),
-                money(entry.amount),
-            ])
-        pending_table = Table(pending_data, colWidths=[30 * mm, 78 * mm, 47 * mm, 25 * mm], repeatRows=1)
-        pending_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FEF3C7")),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("ALIGN", (-1, 0), (-1, -1), "RIGHT"),
-            ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#D6D3D1")),
-            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ]))
-        story.append(pending_table)
+    formula = f"Faturado {money(summary['billed'])} − Gastos {money(summary['expenses'])} = Lucro {money(summary['profit'])}"
+    story.append(Paragraph(f"<b>Conferência:</b> {xml_escape(formula)}", styles["FinBody"]))
+    story.append(Spacer(1, 2 * mm))
+    story.append(Paragraph(xml_escape(settings.footer_text or "Serviço elétrico com organização e segurança."), styles["FinSmall"]))
 
-    if summary["pending_expense_entries"]:
-        story.extend([Spacer(1, 4 * mm), Paragraph("Valores a pagar", styles["FinSection"])])
-        payable_data = [["Vencimento", "Descrição", "Categoria", "Valor"]]
-        for entry in summary["pending_expense_entries"]:
-            payable_data.append([
-                entry.due_date.strftime("%d/%m/%Y"),
-                Paragraph(xml_escape(entry.description or "A pagar"), styles["FinBody"]),
-                Paragraph(xml_escape(unicodedata.normalize("NFKC", " ".join((entry.category or "Outros").split()))), styles["FinBody"]),
-                money(entry.amount),
-            ])
-        payable_table = Table(payable_data, colWidths=[30 * mm, 83 * mm, 42 * mm, 25 * mm], repeatRows=1)
-        payable_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FFEDD5")),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("ALIGN", (-1, 0), (-1, -1), "RIGHT"),
-            ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#D6D3D1")),
-            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ]))
-        story.append(payable_table)
-
-    if settings.footer_text:
-        story.extend([Spacer(1, 8 * mm), Paragraph(xml_escape(str(settings.footer_text)), styles["FinSmall"])])
     doc.build(story)
     buffer.seek(0)
     return buffer
 
-# -------------------- Finance --------------------
+
 @app.route("/finance")
 @login_required
 def finance():
     type_filter = request.args.get("type", "")
     status_filter = request.args.get("status", "")
     focus = request.args.get("focus", "").strip().lower()
-    if focus not in {"receivable", "payable"}:
+    if focus not in {"billed", "received", "expenses", "balance", "receivable", "payable", "profit"}:
         focus = ""
 
-    today = date.today()
+    today = local_today()
     default_start = today.replace(day=1)
     default_end = ((default_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1))
     start = parse_date(request.args.get("start"), default_start)
@@ -2958,46 +2918,69 @@ def finance():
         query = query.filter_by(status=status_filter)
     entries = query.order_by(FinanceEntry.due_date.desc(), FinanceEntry.id.desc()).all()
 
-    paid_income = sum((Decimal(x.amount or 0) for x in entries if x.type == "income" and x.status == "paid"), Decimal("0"))
-    pending_income = sum((Decimal(x.amount or 0) for x in entries if x.type == "income" and x.status == "pending"), Decimal("0"))
-    paid_expense = sum((Decimal(x.amount or 0) for x in entries if x.type == "expense" and x.status == "paid"), Decimal("0"))
-    pending_expense = sum((Decimal(x.amount or 0) for x in entries if x.type == "expense" and x.status == "pending"), Decimal("0"))
     summary = get_finance_month_summary(request.args.get("month"))
-
-    # Painel aberto ao tocar nos cards "A receber" / "A pagar".
-    # Usa exatamente os lançamentos que compõem os totais do resumo do mês.
     focus_entries = []
+    focus_service_rows = []
     focus_total = Decimal("0")
     focus_team_expenses = {}
-    if focus == "receivable":
-        focus_entries = summary["pending_entries"]
+
+    if focus == "billed":
+        focus_service_rows = [{"service": r["service"], "amount": r["total"], "kind": "Faturado"} for r in summary["service_rows"] if r["total"] > 0]
+        focus_total = summary["billed"]
+    elif focus == "received":
+        focus_service_rows = [{"service": r["service"], "amount": r["received"], "kind": "Recebido"} for r in summary["service_rows"] if r["received"] > 0]
+        focus_total = summary["received"]
+    elif focus == "receivable":
+        focus_service_rows = [{"service": r["service"], "amount": r["receivable"], "kind": "A receber"} for r in summary["service_rows"] if r["receivable"] > 0]
         focus_total = summary["receivable"]
+    elif focus == "expenses":
+        focus_entries = summary["all_expense_entries"]
+        focus_total = summary["expenses"]
     elif focus == "payable":
         focus_entries = summary["pending_expense_entries"]
         focus_total = summary["payable"]
-        entry_ids = [x.id for x in focus_entries]
+    elif focus == "balance":
+        focus_service_rows = [{"service": r["service"], "amount": r["received"], "kind": "Entrada recebida"} for r in summary["service_rows"] if r["received"] > 0]
+        focus_entries = summary["expense_entries"]
+        focus_total = summary["balance"]
+    elif focus == "profit":
+        focus_service_rows = [{"service": r["service"], "amount": r["total"], "kind": "Faturamento"} for r in summary["service_rows"] if r["total"] > 0]
+        focus_entries = summary["all_expense_entries"]
+        focus_total = summary["profit"]
+
+    if focus_entries:
+        entry_ids = [x.id for x in focus_entries if x.type == "expense"]
         if entry_ids:
             linked_expenses = EmployeeExpense.query.filter(EmployeeExpense.finance_entry_id.in_(entry_ids)).all()
             focus_team_expenses = {x.finance_entry_id: x for x in linked_expenses if x.finance_entry_id}
 
+    # Totais da lista inferior continuam sendo apenas os lançamentos filtrados.
+    paid_income = sum((Decimal(x.amount or 0) for x in entries if x.type == "income" and x.status == "paid"), Decimal("0"))
+    pending_income = sum((Decimal(x.amount or 0) for x in entries if x.type == "income" and x.status == "pending"), Decimal("0"))
+    paid_expense = sum((Decimal(x.amount or 0) for x in entries if x.type == "expense" and x.status == "paid"), Decimal("0"))
+    pending_expense = sum((Decimal(x.amount or 0) for x in entries if x.type == "expense" and x.status == "pending"), Decimal("0"))
+
     return render_template(
-        "finance.html",
-        entries=entries,
-        type_filter=type_filter,
-        status_filter=status_filter,
-        start=start,
-        end=end,
-        paid_income=paid_income,
-        pending_income=pending_income,
-        paid_expense=paid_expense,
-        pending_expense=pending_expense,
-        summary=summary,
-        focus=focus,
-        focus_entries=focus_entries,
-        focus_total=focus_total,
-        focus_team_expenses=focus_team_expenses,
+        "finance.html", entries=entries, type_filter=type_filter, status_filter=status_filter,
+        start=start, end=end, paid_income=paid_income, pending_income=pending_income,
+        paid_expense=paid_expense, pending_expense=pending_expense, summary=summary,
+        focus=focus, focus_entries=focus_entries, focus_service_rows=focus_service_rows,
+        focus_total=focus_total, focus_team_expenses=focus_team_expenses,
     )
 
+
+@app.route("/finance/reconcile", methods=["POST"])
+@admin_required
+def finance_reconcile():
+    services_count, expenses_count, deduped_count, dates_count = repair_financial_history()
+    msg = f"Financeiro conferido: {services_count} serviços e {expenses_count} gastos sincronizados"
+    if deduped_count:
+        msg += f", {deduped_count} duplicidade(s) de ajudante corrigida(s)"
+    if dates_count:
+        msg += f", {dates_count} data(s) ajustada(s)"
+    flash(msg + ".", "success")
+    month = request.form.get("month") or request.args.get("month")
+    return redirect(url_for("finance", month=month) if month else url_for("finance"))
 
 
 @app.route("/finance/monthly/pdf")
@@ -3291,6 +3274,92 @@ def sync_employee_expense_finance(expense):
         entry.paid_date = None
 
 
+def find_reusable_helper_expense(service, employee_id, helper_value):
+    """Reaproveita uma diária/pagamento manual equivalente ao valor do serviço.
+
+    Isso evita contar duas vezes quando o Guilherme já lançou a diária do
+    ajudante e depois também informou o mesmo valor dentro do serviço. Só
+    reaproveitamos quando existe uma única correspondência inequívoca.
+    """
+    if not service or not service.service_date or helper_value <= 0:
+        return None
+    candidates = EmployeeExpense.query.filter(
+        EmployeeExpense.employee_id == employee_id,
+        EmployeeExpense.expense_date == service.service_date,
+        EmployeeExpense.amount == helper_value,
+        EmployeeExpense.category.in_(["daily", "payment"]),
+        or_(EmployeeExpense.service_id.is_(None), EmployeeExpense.service_id == service.id),
+        or_(EmployeeExpense.notes.is_(None), EmployeeExpense.notes != AUTO_HELPER_SERVICE_NOTE),
+    ).order_by(EmployeeExpense.id.asc()).all()
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def reconcile_duplicate_helper_expenses():
+    """Remove duplicidade histórica entre diária manual e custo automático.
+
+    Um caso comum nas versões anteriores era a mesma diária ser lançada em
+    "Dias trabalhados" e, depois, criada novamente quando o valor do ajudante
+    era informado no serviço. Quando há exatamente um manual e um automático
+    com mesmo ajudante, data e valor, preservamos o manual (inclusive o status
+    pago) e removemos apenas a cópia automática.
+    """
+    removed = 0
+    autos = EmployeeExpense.query.filter_by(notes=AUTO_HELPER_SERVICE_NOTE).order_by(EmployeeExpense.id.asc()).all()
+    groups = {}
+    for auto in autos:
+        key = (auto.employee_id, auto.expense_date, Decimal(auto.amount or 0))
+        groups.setdefault(key, []).append(auto)
+
+    for (employee_id, expense_date, amount), auto_group in groups.items():
+        if len(auto_group) != 1:
+            continue
+        auto = auto_group[0]
+        manuals = EmployeeExpense.query.filter(
+            EmployeeExpense.employee_id == employee_id,
+            EmployeeExpense.expense_date == expense_date,
+            EmployeeExpense.amount == amount,
+            EmployeeExpense.id != auto.id,
+            EmployeeExpense.category.in_(["daily", "payment"]),
+            or_(EmployeeExpense.service_id.is_(None), EmployeeExpense.service_id == auto.service_id),
+            or_(EmployeeExpense.notes.is_(None), EmployeeExpense.notes != AUTO_HELPER_SERVICE_NOTE),
+        ).order_by(EmployeeExpense.id.asc()).all()
+        if len(manuals) != 1:
+            continue
+
+        manual = manuals[0]
+        assignment = None
+        if auto.service_id:
+            assignment = ServiceAssignment.query.filter_by(
+                service_id=auto.service_id, employee_id=employee_id
+            ).first()
+
+        final_status = "paid" if "paid" in {manual.status, auto.status} else "pending"
+        manual.service_id = auto.service_id or manual.service_id
+        manual.category = "payment"
+        manual.notes = AUTO_HELPER_SERVICE_NOTE
+        manual.status = final_status
+        if assignment:
+            assignment.helper_payment_status = final_status
+
+        # Mantém um único lançamento financeiro. Se o manual já tem um, ele
+        # prevalece; caso contrário reaproveita o lançamento da cópia automática.
+        if manual.finance_entry_id:
+            if auto.finance_entry_id and auto.finance_entry_id != manual.finance_entry_id:
+                duplicate_entry = db.session.get(FinanceEntry, auto.finance_entry_id)
+                if duplicate_entry:
+                    db.session.delete(duplicate_entry)
+        elif auto.finance_entry_id:
+            manual.finance_entry_id = auto.finance_entry_id
+
+        auto.finance_entry_id = None
+        db.session.delete(auto)
+        db.session.flush()
+        sync_employee_expense_finance(manual)
+        removed += 1
+
+    return removed
+
+
 def sync_service_helper_expenses(service):
     """Mantém o valor do ajudante 100% sincronizado com o Financeiro.
 
@@ -3340,17 +3409,32 @@ def sync_service_helper_expenses(service):
     for employee_id, (assignment, helper_value, payment_status) in desired.items():
         expense = by_employee.get(employee_id)
         if expense is None:
-            expense = EmployeeExpense(
-                employee_id=employee_id,
-                service_id=service.id,
-                expense_date=service.service_date or local_today(),
-                category="payment",
-                amount=helper_value,
-                status=payment_status,
-                notes=AUTO_HELPER_SERVICE_NOTE,
-            )
-            db.session.add(expense)
-            db.session.flush()
+            reusable = find_reusable_helper_expense(service, employee_id, helper_value)
+            if reusable is not None:
+                expense = reusable
+                expense.service_id = service.id
+                expense.expense_date = service.service_date or expense.expense_date or local_today()
+                expense.category = "payment"
+                expense.amount = helper_value
+                expense.notes = AUTO_HELPER_SERVICE_NOTE
+                # Nunca transforma um pagamento manual já quitado em pendente.
+                if expense.status == "paid":
+                    payment_status = "paid"
+                    assignment.helper_payment_status = "paid"
+                else:
+                    expense.status = payment_status
+            else:
+                expense = EmployeeExpense(
+                    employee_id=employee_id,
+                    service_id=service.id,
+                    expense_date=service.service_date or local_today(),
+                    category="payment",
+                    amount=helper_value,
+                    status=payment_status,
+                    notes=AUTO_HELPER_SERVICE_NOTE,
+                )
+                db.session.add(expense)
+                db.session.flush()
         else:
             expense.expense_date = service.service_date or expense.expense_date or local_today()
             expense.category = "payment"
