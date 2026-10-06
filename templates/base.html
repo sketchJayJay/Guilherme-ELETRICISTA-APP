@@ -80,6 +80,34 @@
 {% endif %}
 
 <div class="content premium-content">
+{% set main_pages = ['dashboard', 'agenda', 'clients', 'quotes', 'services', 'finance', 'reports', 'team', 'materials', 'settings', 'helper_dashboard'] %}
+{% set show_page_back = (request.endpoint not in main_pages and request.endpoint not in ['login', 'setup', 'logout']) or (request.endpoint == 'finance' and request.args.get('focus')) %}
+{% if show_page_back %}
+  {% if request.endpoint == 'finance' %}
+    {% set back_fallback = url_for('finance', month=request.args.get('month')) %}
+  {% elif request.endpoint and request.endpoint.startswith('service') %}
+    {% set back_fallback = url_for('services') %}
+  {% elif request.endpoint and request.endpoint.startswith('client') %}
+    {% set back_fallback = url_for('clients') %}
+  {% elif request.endpoint and request.endpoint.startswith('quote') %}
+    {% set back_fallback = url_for('quotes') %}
+  {% elif request.endpoint and request.endpoint.startswith('finance') %}
+    {% set back_fallback = url_for('finance') %}
+  {% elif request.endpoint and request.endpoint.startswith('material') %}
+    {% set back_fallback = url_for('materials') %}
+  {% elif request.endpoint and (request.endpoint.startswith('team') or request.endpoint.startswith('employee') or request.endpoint.startswith('task')) %}
+    {% set back_fallback = url_for('team') %}
+  {% elif request.endpoint and request.endpoint.startswith('helper') %}
+    {% set back_fallback = url_for('helper_dashboard') %}
+  {% else %}
+    {% set back_fallback = url_for('dashboard') %}
+  {% endif %}
+  <div class="page-back-row no-print">
+    <a class="page-back-button" href="{{ back_fallback }}" onclick="if (window.history && window.history.length > 1) { window.history.back(); return false; }" aria-label="Voltar para a tela anterior">
+      <span class="page-back-arrow" aria-hidden="true">←</span><span>Voltar</span>
+    </a>
+  </div>
+{% endif %}
 {% with messages=get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-wrap no-print">{% for cat,msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}</div>{% endif %}{% endwith %}
 {% block content %}{% endblock %}
 </div>
