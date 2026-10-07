@@ -1170,29 +1170,39 @@ def get_busy_service_dates(exclude_service_id=None):
 @app.route("/")
 @login_required
 def dashboard():
-    today = date.today()
+    today = local_today()
     month_start = today.replace(day=1)
     next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
 
     today_services = Service.query.filter(Service.service_date == today, Service.status != "cancelled").order_by(Service.service_time.asc().nullslast(), Service.id).all()
     upcoming = Service.query.filter(Service.service_date > today, Service.status.in_(["scheduled", "in_progress"])).order_by(Service.service_date, Service.service_time).limit(8).all()
     overdue_services = Service.query.filter(Service.service_date < today, Service.status.in_(["scheduled", "in_progress"])).order_by(Service.service_date).limit(8).all()
+    overdue_count = Service.query.filter(Service.service_date < today, Service.status.in_(["scheduled", "in_progress"])).count()
 
-    paid_reference_date = func.coalesce(FinanceEntry.paid_date, FinanceEntry.due_date)
-    month_income = db.session.query(func.coalesce(func.sum(FinanceEntry.amount), 0)).filter(
-        FinanceEntry.type == "income", FinanceEntry.status == "paid",
-        paid_reference_date >= month_start, paid_reference_date < next_month
-    ).scalar() or 0
-    month_expense = db.session.query(func.coalesce(func.sum(FinanceEntry.amount), 0)).filter(
-        FinanceEntry.type == "expense", FinanceEntry.status == "paid",
-        paid_reference_date >= month_start, paid_reference_date < next_month
-    ).scalar() or 0
-    month_balance = Decimal(month_income or 0) - Decimal(month_expense or 0)
+    # O painel usa o mesmo fechamento por competência do Financeiro.
+    summary = get_finance_month_summary(month_start.strftime("%Y-%m"))
+    month_income = summary["received"]
+    month_expense = summary["expenses"]
+    month_balance = summary["profit"]
+    week_start = today - timedelta(days=6)
+    week_rows = db.session.query(Service.service_date, func.count(Service.id)).filter(
+        Service.service_date >= week_start, Service.service_date <= today,
+        Service.status != "cancelled",
+    ).group_by(Service.service_date).all()
+    week_counts = dict(week_rows)
+    weekly_activity = [{"date": week_start + timedelta(days=i),
+                        "count": int(week_counts.get(week_start + timedelta(days=i), 0))}
+                       for i in range(7)]
+    activity_max = max([x["count"] for x in weekly_activity] + [1])
+    by_status = {key: sum(1 for s in summary["services"] if s.status == key)
+                 for key in ["scheduled", "in_progress", "completed"]}
+    received_percent = min(100, max(0, round(float(summary["received"] / summary["billed"] * 100)))) if summary["billed"] > 0 else 0
     receivable = db.session.query(func.coalesce(func.sum(FinanceEntry.amount), 0)).filter(
         FinanceEntry.type == "income", FinanceEntry.status == "pending"
     ).scalar() or 0
     pending_count = FinanceEntry.query.filter_by(type="income", status="pending").count()
     low_stock = Material.query.filter(Material.stock_qty <= Material.min_stock).order_by(Material.name).limit(8).all()
+    low_stock_count = Material.query.filter(Material.stock_qty <= Material.min_stock).count()
     team_pending_tasks = EmployeeTask.query.join(Employee).filter(Employee.active.is_(True), EmployeeTask.status.in_(["pending", "in_progress"]), EmployeeTask.task_date <= today).count()
     helper_pending_amount = db.session.query(func.coalesce(func.sum(EmployeeExpense.amount), 0)).join(Employee).filter(Employee.active.is_(True), EmployeeExpense.status == "pending").scalar() or 0
     client_count = Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).count()
@@ -1204,18 +1214,60 @@ def dashboard():
         today_services=today_services,
         upcoming=upcoming,
         overdue_services=overdue_services,
+        overdue_count=overdue_count,
         month_income=month_income,
         month_expense=month_expense,
         month_balance=month_balance,
         receivable=receivable,
         pending_count=pending_count,
         low_stock=low_stock,
+        low_stock_count=low_stock_count,
         team_pending_tasks=team_pending_tasks,
         helper_pending_amount=helper_pending_amount,
         client_count=client_count,
         open_quote_count=open_quote_count,
         recent_services=recent_services,
+        summary=summary,
+        weekly_activity=weekly_activity,
+        activity_max=activity_max,
+        weekly_total=sum(x["count"] for x in weekly_activity),
+        by_status=by_status,
+        received_percent=received_percent,
     )
+
+
+@app.route("/api/search")
+@admin_required
+def global_search():
+    """Busca somente de leitura; valores privados permanecem na área do administrador."""
+    q = request.args.get("q", "").strip()[:120]
+    if len(q) < 2:
+        return jsonify(results=[])
+    like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    def contains(column):
+        return column.ilike(like, escape="\\")
+    results = []
+    for c in Client.query.filter(Client.name != SYSTEM_QUOTE_CLIENT_NAME).filter(
+        or_(contains(Client.name), contains(Client.phone), contains(Client.city))
+    ).order_by(Client.name).limit(5).all():
+        results.append({"kind": "Cliente", "title": c.name,
+                        "detail": c.phone or c.city or "Cadastro do cliente",
+                        "url": url_for("client_detail", client_id=c.id)})
+    service_match = or_(contains(Service.title), contains(Client.name), contains(Service.description))
+    if q.isdecimal() and len(q) <= 10:
+        service_match = or_(service_match, Service.id == int(q))
+    for s in Service.query.join(Client).filter(service_match).order_by(Service.service_date.desc(), Service.id.desc()).limit(5).all():
+        results.append({"kind": "Serviço", "title": s.title,
+                        "detail": f"#{s.id} · {s.client.name} · {s.service_date.strftime('%d/%m/%Y')}",
+                        "url": url_for("service_detail", service_id=s.id)})
+    quote_match = or_(contains(Quote.title), contains(Client.name), contains(Quote.guest_name))
+    if q.isdecimal() and len(q) <= 10:
+        quote_match = or_(quote_match, Quote.id == int(q))
+    for quote in Quote.query.join(Client).filter(quote_match).order_by(Quote.id.desc()).limit(5).all():
+        results.append({"kind": "Orçamento", "title": quote.title,
+                        "detail": f"#{quote.id} · {quote.customer_name}",
+                        "url": url_for("quote_detail", quote_id=quote.id)})
+    return jsonify(results=results)
 
 
 # -------------------- Clients --------------------
@@ -1332,6 +1384,15 @@ def agenda():
         grid_start = start - timedelta(days=start_offset)
         month_cells = [grid_start + timedelta(days=i) for i in range(42)]
 
+    if view == "month":
+        prev_base = start - timedelta(days=1)
+        next_base = end
+        agenda_label = f"{MONTH_NAMES_PT[base.month - 1]} de {base.year}"
+    else:
+        step = 1 if view == "day" else 7
+        prev_base, next_base = base - timedelta(days=step), base + timedelta(days=step)
+        agenda_label = base.strftime("%d/%m/%Y") if view == "day" else f"{start.strftime('%d/%m')} — {(end - timedelta(days=1)).strftime('%d/%m/%Y')}"
+
     return render_template(
         "agenda.html",
         services=services,
@@ -1341,6 +1402,9 @@ def agenda():
         base=base,
         view=view,
         month_cells=month_cells,
+        prev_base=prev_base,
+        next_base=next_base,
+        agenda_label=agenda_label,
     )
 
 
@@ -1350,6 +1414,11 @@ def services():
     q = request.args.get("q", "").strip()
     status = request.args.get("status", "")
     query = Service.query.join(Client)
+    if request.args.get("overdue") == "1":
+        query = query.filter(Service.service_date < local_today(), Service.status.in_(["scheduled", "in_progress"]))
+    if request.args.get("month"):
+        period_start, period_end, _, _ = parse_month_value(request.args.get("month"))
+        query = query.filter(Service.service_date >= period_start, Service.service_date < period_end)
     if q:
         like = f"%{q}%"
         query = query.filter(or_(Service.title.ilike(like), Client.name.ilike(like), Service.description.ilike(like)))

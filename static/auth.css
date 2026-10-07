@@ -1,0 +1,41 @@
+/* Access screens · Guilherme Executive */
+body.executive.auth-page{display:grid;place-items:center;padding:36px;min-height:100dvh;background:radial-gradient(ellipse at 15% 40%,#182d4555,transparent 58%),#0d1420;overflow-x:hidden}
+.executive .auth-frame{display:grid;grid-template-columns:1.2fr 1fr;gap:85px;width:min(1060px,100%);align-items:center;position:relative}
+.executive .auth-brand-side{padding:20px 0}
+.executive .auth-brand-logo{display:block;width:310px;max-width:100%;height:auto;max-height:none;object-fit:contain;margin:0 0 40px}
+.executive .auth-brand-line{display:flex;align-items:center;gap:15px;color:#6b9fc9;margin-bottom:30px}
+.executive .auth-brand-line>span{width:65px;height:1px;background:#e9c86c}
+.executive .auth-brand-line>.ui-icon{width:18px;height:18px}
+.executive .auth-brand-line>.ui-icon:nth-child(2){color:#e9c86c}
+.executive .auth-brand-side .eyebrow{color:#9db0c9;font-size:9px;margin-bottom:15px}
+.executive .auth-brand-side h2{font-size:34px;font-weight:600;line-height:1.35;letter-spacing:-.045em;margin:0 0 23px;color:#ecf2fb}
+.executive .auth-brand-side h2>span{color:#9ab4d1}
+.executive .auth-brand-side>p{max-width:410px;color:#8399b5;font-size:13px;line-height:1.8;margin:0 0 30px}
+.executive .auth-benefits{display:grid;gap:17px}
+.executive .auth-benefits>span{display:flex;align-items:center;gap:13px;font-size:12px;color:#becbde}
+.executive .auth-benefits .ui-icon{width:17px;height:17px;color:#d2b870}
+.executive .auth-brand-footer{border-top:1px solid #2a374b;margin-top:35px;padding-top:20px;font-size:10px;color:#647e9e}
+.executive .auth-card{background:#141f2d;border:1px solid #354457;border-radius:19px;width:100%;max-width:460px;padding:37px;box-shadow:0 25px 90px #0002}
+.executive .auth-access-label{display:flex;align-items:center;gap:8px;font-size:8px;letter-spacing:.13em;font-weight:600;color:#bda96f;margin-bottom:21px}
+.executive .auth-access-label>i{display:block;width:5px;height:5px;border-radius:50%;background:#e8c76c}
+.executive .auth-card h1{font-size:28px;letter-spacing:-.045em;font-weight:550;margin:0 0 10px}
+.executive .auth-card>p{font-size:12px;color:#8b9fbb;margin:0 0 28px;line-height:1.6}
+.executive .auth-form{display:grid;gap:23px}
+.executive .auth-form .field{gap:10px}
+.executive .auth-form label{font-size:11px;color:#b3c4da;text-transform:none;letter-spacing:0}
+.executive.auth-page .auth-form .field>label{display:block!important}
+.executive.auth-page .auth-form .auth-submit{background:var(--brand)!important;border-color:var(--brand)!important;font-weight:600!important}
+.executive .auth-form .input{height:47px;font-size:13px;padding:12px 14px;border-color:#3b4c65;background:#101928;border-radius:9px}
+.executive .auth-form .auth-submit{display:flex;width:100%;justify-content:space-between;align-items:center;min-height:47px;border-radius:9px;padding:12px 18px;font-size:12px;color:#302914;box-shadow:none;margin:5px 0 0}
+.executive .password-field{position:relative}
+.executive .password-field input{width:100%;padding-right:49px!important}
+.executive .password-field button{position:absolute;right:5px;top:5px;bottom:5px;width:37px;display:grid;place-items:center;border:0;background:none;border-radius:7px;color:#7e96b6;cursor:pointer}
+.executive .password-field button:hover,.executive .password-field button[aria-pressed="true"]{color:#d4c084;background:#f2c75c08}
+.executive .password-field .ui-icon{width:17px}
+.executive .auth-card-footer{display:flex;align-items:center;justify-content:center;gap:5px;color:#68829f;font-size:9px;border-top:1px solid #2d3f54;padding-top:23px;margin-top:28px}
+.executive .auth-card-footer .ui-icon{width:12px;height:12px;color:#a8925e}
+.executive .auth-card>.flash{margin-bottom:20px;font-size:12px}
+.executive .setup-card{max-width:500px}
+.executive .setup-card .auth-brand-logo{width:260px;margin:0 0 25px}
+@media(max-width:900px){.executive .auth-frame{gap:40px}.executive .auth-brand-side h2{font-size:29px}.executive .auth-card{padding:29px}.executive .auth-brand-logo{width:290px}}
+@media(max-width:760px){body.executive.auth-page{padding:25px 19px;display:block;background:radial-gradient(ellipse at 15% 15%,#182d4555,transparent 58%),#0d1420}.executive .auth-frame{display:flex;flex-direction:column;gap:18px;max-width:480px;margin:0 auto;align-items:stretch}.executive .auth-brand-side{padding:15px 10px 0;text-align:center}.executive .auth-brand-side .auth-brand-logo{width:280px;max-width:90%;margin:0 auto 26px}.executive .auth-brand-line,.executive .auth-brand-side .eyebrow,.executive .auth-brand-side>p,.executive .auth-benefits,.executive .auth-brand-footer{display:none}.executive .auth-brand-side h2{font-size:21px;line-height:1.45;margin:0 0 10px}.executive .auth-card{padding:30px 25px;border-radius:16px;max-width:none}.executive .auth-card h1{font-size:27px}.executive .auth-card>p{font-size:12px}.executive .auth-form{gap:22px}.executive .auth-form .input{font-size:16px;height:49px}.executive .auth-form .auth-submit{font-size:13px;min-height:49px}.executive .auth-form label{font-size:11px}.executive .auth-access-label{font-size:8px}.executive .auth-card-footer{font-size:9px}.executive .setup-card{max-width:480px;margin:10px auto}.executive .setup-card .auth-brand-logo{max-width:95%}}

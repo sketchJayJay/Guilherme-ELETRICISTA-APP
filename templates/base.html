@@ -1,134 +1,114 @@
+{% from 'ui.html' import icon %}
+{% set ep = request.endpoint or '' %}
+{% set page_names = {'dashboard':'Visão geral','agenda':'Agenda','clients':'Clientes','quotes':'Orçamentos','services':'Serviços','finance':'Financeiro','reports':'Relatórios','team':'Equipe','materials':'Materiais','settings':'Configurações','helper_dashboard':'Meu dia','service_new':'Novo serviço','service_edit':'Editar serviço','service_detail':'Ordem de serviço','client_new':'Novo cliente','client_edit':'Editar cliente','client_detail':'Histórico do cliente','quote_new':'Novo orçamento','quote_edit':'Editar orçamento','quote_detail':'Proposta','finance_new':'Novo lançamento','finance_edit':'Editar lançamento','team_workdays':'Dias da equipe'} %}
 <!doctype html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>{% block title %}{{ app_settings.business_name }}{% endblock %}</title>
-<meta name="theme-color" content="#050b14">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="apple-mobile-web-app-title" content="Guilherme">
+<meta name="theme-color" content="#0b1019">
+<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="Guilherme">
 <meta name="format-detection" content="telephone=yes">
 <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
 <link rel="icon" type="image/png" href="{{ url_for('static', filename='icon-192.png') }}">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260910-clientflow">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20261007">
+<link rel="stylesheet" href="{{ url_for('static', filename='executive.css') }}?v=20261007-1">
 </head>
-<body class="layout-v3 v5-impact v6-luxe {% if request.endpoint=='dashboard' %}is-dashboard{% endif %}">
-<div class="app-shell premium-shell">
-<aside class="sidebar premium-sidebar no-print">
-  <div class="brand brand-logo-wrap premium-brand">
-    <img class="brand-logo-img" src="{{ url_for('static', filename='brand-logo.png') }}" alt="{{ app_settings.business_name }}">
-  </div>
-
+<body class="executive {% if ep=='dashboard' %}is-dashboard{% endif %}" data-search-url="{{ url_for('global_search') if not is_employee else '' }}">
+<a class="skip-link" href="#main-content">Ir para o conteúdo</a>
+<div class="app-shell">
+<aside class="sidebar no-print" id="appSidebar" aria-label="Menu principal">
+  <div class="sidebar-brand"><a href="{{ url_for('helper_dashboard' if is_employee else 'dashboard') }}"><img src="{{ url_for('static', filename='brand-logo.png') }}" alt="{{ app_settings.business_name }}"></a><button class="icon-button sidebar-close" type="button" onclick="closeSidebar()" aria-label="Fechar menu">{{ icon('close') }}</button></div>
+  <div class="workspace-label"><span class="workspace-dot"></span>{{ 'Área do ajudante' if is_employee else 'Área de trabalho' }}</div>
+  <nav class="nav">
   {% if is_employee %}
-  <nav class="nav premium-nav">
-    <a href="{{ url_for('helper_dashboard') }}" class="{% if request.endpoint=='helper_dashboard' %}active{% endif %}"><span class="ico">⌂</span> Meu dia</a>
-  </nav>
-  <div class="sidebar-mini-card"><span class="mini-energy">⚡</span><div><small>Área do ajudante</small><strong>{{ current_employee.name if current_employee else 'Equipe' }}</strong></div></div>
-  <div class="sidebar-footer"><a href="{{ url_for('logout') }}">↪ Sair</a></div>
+    <span class="nav-caption">SUA ROTINA</span>
+    <a href="{{ url_for('helper_dashboard') }}" class="active" aria-current="page">{{ icon('home') }}<span>Meu dia</span></a>
+    <a href="{{ url_for('helper_dashboard') }}#tarefas">{{ icon('check') }}<span>Tarefas</span></a>
+    <a href="{{ url_for('helper_dashboard') }}#servicos">{{ icon('wrench') }}<span>Serviços atribuídos</span></a>
   {% else %}
-  <nav class="nav premium-nav">
-    <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint=='dashboard' %}active{% endif %}"><span class="ico">⌂</span> Início</a>
-    <a href="{{ url_for('agenda') }}" class="{% if request.endpoint=='agenda' %}active{% endif %}"><span class="ico">▣</span> Agenda</a>
-    <a href="{{ url_for('clients') }}" class="{% if request.endpoint and request.endpoint.startswith('client') %}active{% endif %}"><span class="ico">♙</span> Clientes</a>
-    <a href="{{ url_for('quotes') }}" class="{% if request.endpoint and request.endpoint.startswith('quote') %}active{% endif %}"><span class="ico">▤</span> Orçamentos</a>
-    <a href="{{ url_for('services') }}" class="{% if request.endpoint and request.endpoint.startswith('service') %}active{% endif %}"><span class="ico">⌁</span> Serviços</a>
-    <a href="{{ url_for('finance') }}" class="{% if request.endpoint and request.endpoint.startswith('finance') %}active{% endif %}"><span class="ico">$</span> Financeiro</a>
-    <a href="{{ url_for('reports') }}" class="{% if request.endpoint and request.endpoint.startswith('report') %}active{% endif %}"><span class="ico">▥</span> Relatórios</a>
-    <a href="{{ url_for('team') }}" class="{% if request.endpoint and (request.endpoint.startswith('team') or request.endpoint.startswith('employee')) %}active{% endif %}"><span class="ico">♧</span> Equipe</a>
-    <a href="{{ url_for('materials') }}" class="{% if request.endpoint and request.endpoint.startswith('material') %}active{% endif %}"><span class="ico">▦</span> Materiais</a>
-    <a href="{{ url_for('settings') }}" class="{% if request.endpoint=='settings' %}active{% endif %}"><span class="ico">⚙</span> Configurações</a>
-  </nav>
-  <div class="sidebar-mini-card sidebar-brand-message">
-    <span class="mini-energy">⚡</span><span class="mini-cold">❄</span>
-    <div><small>Guilherme Elétrica e Climatização</small><strong>Energia que move. Clima que transforma.</strong></div>
-  </div>
-  <div class="sidebar-contact-v5"><a href="https://wa.me/55{{ (app_settings.phone or '32998244630')|replace(' ','')|replace('(','')|replace(')','')|replace('-','') }}" target="_blank" rel="noopener"><span>◉</span> {{ app_settings.phone or '(32) 99824-4630' }}</a></div>
-  <div class="sidebar-footer"><a href="{{ url_for('logout') }}">↪ Sair</a></div>
+    <span class="nav-caption">PRINCIPAL</span>
+    {% for endpoint,label,symbol,active in [
+      ('dashboard','Visão geral','home',ep=='dashboard'),
+      ('agenda','Agenda','calendar',ep=='agenda'),
+      ('services','Serviços','wrench',ep.startswith('service')),
+      ('quotes','Orçamentos','file',ep.startswith('quote')),
+      ('clients','Clientes','users',ep.startswith('client'))] %}
+    <a href="{{ url_for(endpoint) }}" class="{{ 'active' if active else '' }}" {% if active %}aria-current="page"{% endif %}>{{ icon(symbol) }}<span>{{ label }}</span>{% if active %}<i class="nav-active-dot"></i>{% endif %}</a>
+    {% endfor %}
+    <span class="nav-caption nav-group">GESTÃO</span>
+    {% for endpoint,label,symbol,active in [
+      ('finance','Financeiro','wallet',ep.startswith('finance')),
+      ('reports','Relatórios','chart',ep.startswith('report')),
+      ('team','Equipe','users',ep.startswith('team') or ep.startswith('employee') or ep.startswith('task')),
+      ('materials','Materiais','box',ep.startswith('material'))] %}
+    <a href="{{ url_for(endpoint) }}" class="{{ 'active' if active else '' }}" {% if active %}aria-current="page"{% endif %}>{{ icon(symbol) }}<span>{{ label }}</span>{% if active %}<i class="nav-active-dot"></i>{% endif %}</a>
+    {% endfor %}
   {% endif %}
+  </nav>
+  <div class="sidebar-end">
+    {% if not is_employee %}<a href="{{ url_for('settings') }}" class="sidebar-settings {{ 'active' if ep=='settings' else '' }}">{{ icon('settings') }}<span>Configurações</span></a>{% endif %}
+    <div class="sidebar-profile"><span class="profile-avatar">{{ (current_employee.name if is_employee and current_employee else (app_settings.owner_name or 'Guilherme'))[:1]|upper }}</span><div><strong>{{ current_employee.name if is_employee and current_employee else (app_settings.owner_name or 'Guilherme') }}</strong><small>{{ 'Ajudante' if is_employee else 'Administrador' }}</small></div><a href="{{ url_for('logout') }}" aria-label="Sair do sistema" title="Sair">{{ icon('logout') }}</a></div>
+  </div>
 </aside>
-
 <div class="sidebar-overlay no-print" onclick="closeSidebar()"></div>
-<main class="main premium-main">
-<header class="topbar premium-topbar no-print">
-  <div class="topbar-left">
-    <button class="menu-square" onclick="toggleSidebar()" aria-label="Abrir menu">☰</button>
-    <img class="topbar-wordmark" src="{{ url_for('static', filename='brand-logo.png') }}" alt="{{ app_settings.business_name }}">
+<main class="main">
+<header class="topbar no-print">
+  <div class="topbar-heading"><button class="icon-button menu-square" type="button" onclick="toggleSidebar()" aria-controls="appSidebar" aria-expanded="false" aria-label="Abrir menu">{{ icon('menu') }}</button><div><small>GUILHERME <span>ELÉTRICA & CLIMATIZAÇÃO</span></small><strong>{{ page_names.get(ep, 'Área de trabalho') }}</strong></div></div>
+  <div class="topbar-actions">
+    {% if not is_employee %}
+    <button class="search-trigger" type="button" aria-label="Buscar no sistema" data-open-search>{{ icon('search') }}<span>Buscar no sistema</span><kbd>Ctrl K</kbd></button>
+    <button class="btn primary topbar-create" type="button" data-open-create>{{ icon('plus') }}Criar{{ icon('down') }}</button>
+    {% endif %}
+    <a class="topbar-avatar" href="{{ url_for('helper_dashboard' if is_employee else 'settings') }}" aria-label="{{ 'Meu dia' if is_employee else 'Configurações da conta' }}">{{ (current_employee.name if is_employee and current_employee else (app_settings.owner_name or 'Guilherme'))[:1]|upper }}</a>
   </div>
-  {% if not is_employee %}
-  <form class="global-search" method="get" action="{{ url_for('clients') }}">
-    <span class="search-icon">⌕</span><input name="q" placeholder="Buscar cliente, serviço, orçamento..." autocomplete="off"><kbd>⌘ K</kbd>
-  </form>
-  <div class="topbar-actions-v5">
-    <a class="topbar-icon-link" href="{{ url_for('agenda') }}" aria-label="Agenda">◷</a>
-    <a class="topbar-icon-link" href="{{ url_for('settings') }}" aria-label="Configurações">☼</a>
-    <div class="topbar-user">
-      <div class="user-avatar">{{ (app_settings.owner_name or 'G')[:2]|upper }}</div>
-      <div class="user-name"><strong>{{ app_settings.owner_name or 'Guilherme' }}</strong><small>Administrador</small></div>
-    </div>
-  </div>
-  {% else %}
-  <div class="topbar-user"><div class="user-avatar">{{ (current_employee.name if current_employee else 'A')[:2]|upper }}</div><div class="user-name"><strong>{{ current_employee.name if current_employee else 'Ajudante' }}</strong><small>Equipe</small></div></div>
-  {% endif %}
 </header>
-
-{% if request.endpoint != 'dashboard' %}
-<div class="mobile-welcome no-print">
-  <div><div class="mobile-welcome-title">{% if now.hour < 12 %}Bom dia{% elif now.hour < 18 %}Boa tarde{% else %}Boa noite{% endif %}, {{ current_employee.name if is_employee and current_employee else (app_settings.owner_name or 'Guilherme') }}!</div><div class="mobile-welcome-sub">{{ now.strftime('%d/%m/%Y') }} · Bora pra mais um dia de serviço ⚡</div></div>
-</div>
+<div class="content" id="main-content" tabindex="-1">
+{% set main_pages = ['dashboard','agenda','clients','quotes','services','finance','reports','team','materials','settings','helper_dashboard'] %}
+{% if (ep not in main_pages and ep not in ['login','setup','logout']) or (ep=='finance' and request.args.get('focus')) %}
+  {% if ep=='finance' %}{% set back_fallback=url_for('finance',month=request.args.get('month')) %}
+  {% elif ep.startswith('service') %}{% set back_fallback=url_for('services') %}
+  {% elif ep.startswith('client') %}{% set back_fallback=url_for('clients') %}
+  {% elif ep.startswith('quote') %}{% set back_fallback=url_for('quotes') %}
+  {% elif ep.startswith('finance') %}{% set back_fallback=url_for('finance') %}
+  {% elif ep.startswith('material') %}{% set back_fallback=url_for('materials') %}
+  {% elif ep.startswith('helper') %}{% set back_fallback=url_for('helper_dashboard') %}
+  {% elif ep.startswith('team') or ep.startswith('employee') or ep.startswith('task') %}{% set back_fallback=url_for('team') %}
+  {% else %}{% set back_fallback=url_for('dashboard') %}{% endif %}
+  <div class="page-back-row no-print"><a class="page-back-button" href="{{ back_fallback }}" data-go-back>{{ icon('back') }}<span>Voltar</span></a></div>
 {% endif %}
-
-<div class="content premium-content">
-{% set main_pages = ['dashboard', 'agenda', 'clients', 'quotes', 'services', 'finance', 'reports', 'team', 'materials', 'settings', 'helper_dashboard'] %}
-{% set show_page_back = (request.endpoint not in main_pages and request.endpoint not in ['login', 'setup', 'logout']) or (request.endpoint == 'finance' and request.args.get('focus')) %}
-{% if show_page_back %}
-  {% if request.endpoint == 'finance' %}
-    {% set back_fallback = url_for('finance', month=request.args.get('month')) %}
-  {% elif request.endpoint and request.endpoint.startswith('service') %}
-    {% set back_fallback = url_for('services') %}
-  {% elif request.endpoint and request.endpoint.startswith('client') %}
-    {% set back_fallback = url_for('clients') %}
-  {% elif request.endpoint and request.endpoint.startswith('quote') %}
-    {% set back_fallback = url_for('quotes') %}
-  {% elif request.endpoint and request.endpoint.startswith('finance') %}
-    {% set back_fallback = url_for('finance') %}
-  {% elif request.endpoint and request.endpoint.startswith('material') %}
-    {% set back_fallback = url_for('materials') %}
-  {% elif request.endpoint and (request.endpoint.startswith('team') or request.endpoint.startswith('employee') or request.endpoint.startswith('task')) %}
-    {% set back_fallback = url_for('team') %}
-  {% elif request.endpoint and request.endpoint.startswith('helper') %}
-    {% set back_fallback = url_for('helper_dashboard') %}
-  {% else %}
-    {% set back_fallback = url_for('dashboard') %}
-  {% endif %}
-  <div class="page-back-row no-print">
-    <a class="page-back-button" href="{{ back_fallback }}" onclick="if (window.history && window.history.length > 1) { window.history.back(); return false; }" aria-label="Voltar para a tela anterior">
-      <span class="page-back-arrow" aria-hidden="true">←</span><span>Voltar</span>
-    </a>
-  </div>
-{% endif %}
-{% with messages=get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-wrap no-print">{% for cat,msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}</div>{% endif %}{% endwith %}
+{% with messages=get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-wrap no-print">{% for cat,msg in messages %}<div class="flash {{ cat }}" role="status">{{ icon('check' if cat=='success' else 'alert') }}<span>{{ msg }}</span><button class="flash-dismiss" type="button" aria-label="Fechar aviso">{{ icon('close') }}</button></div>{% endfor %}</div>{% endif %}{% endwith %}
 {% block content %}{% endblock %}
+<footer class="page-footer no-print"><span>{{ app_settings.business_name }}</span><span>{{ icon('bolt') }} Sua rotina conectada.</span></footer>
 </div>
 </main>
 </div>
-
 {% if is_employee %}
-<nav class="mobile-bottom helper-mobile no-print">
-<a href="{{ url_for('helper_dashboard') }}" class="active"><span>⌂</span>Meu dia</a>
-<a href="{{ url_for('helper_dashboard') }}#tarefas"><span>☑</span>Tarefas</a>
-<a href="{{ url_for('helper_dashboard') }}#servicos"><span>⚡</span>Serviços</a>
-<a href="{{ url_for('logout') }}"><span>↪</span>Sair</a>
-</nav>
+<nav class="mobile-bottom helper-mobile no-print" aria-label="Navegação rápida"><a href="{{ url_for('helper_dashboard') }}" class="active">{{ icon('home') }}<span>Meu dia</span></a><a href="{{ url_for('helper_dashboard') }}#tarefas">{{ icon('check') }}<span>Tarefas</span></a><a href="{{ url_for('helper_dashboard') }}#servicos">{{ icon('wrench') }}<span>Serviços</span></a><a href="{{ url_for('logout') }}">{{ icon('logout') }}<span>Sair</span></a></nav>
 {% else %}
-<nav class="mobile-bottom premium-mobile-nav v5-mobile-nav no-print">
-<a href="{{ url_for('dashboard') }}" class="{% if request.endpoint=='dashboard' %}active{% endif %}"><span>⌂</span>Início</a>
-<a href="{{ url_for('agenda') }}" class="{% if request.endpoint=='agenda' %}active{% endif %}"><span>▣</span>Agenda</a>
-<a href="{{ url_for('service_new') }}" class="mobile-new-center"><span>＋</span><b>Novo</b></a>
-<a href="{{ url_for('services') }}" class="{% if request.endpoint and request.endpoint.startswith('service') %}active{% endif %}"><span>⌁</span>Serviços</a>
-<a href="#" class="mobile-more" onclick="toggleSidebar();return false"><span>•••</span>Mais</a>
+<nav class="mobile-bottom no-print" aria-label="Navegação rápida">
+<a href="{{ url_for('dashboard') }}" class="{{ 'active' if ep=='dashboard' else '' }}">{{ icon('home') }}<span>Início</span></a>
+<a href="{{ url_for('agenda') }}" class="{{ 'active' if ep=='agenda' else '' }}">{{ icon('calendar') }}<span>Agenda</span></a>
+<button type="button" class="mobile-new-center" data-open-create aria-label="Criar novo registro">{{ icon('plus') }}<span>Novo</span></button>
+<a href="{{ url_for('finance') }}" class="{{ 'active' if ep.startswith('finance') else '' }}">{{ icon('wallet') }}<span>Financeiro</span></a>
+<button type="button" class="mobile-more" onclick="toggleSidebar()" aria-controls="appSidebar" aria-expanded="false">{{ icon('menu') }}<span>Mais</span></button>
 </nav>
+<dialog class="command-dialog no-print" id="searchDialog" aria-labelledby="searchTitle">
+  <div class="dialog-heading"><div><small>ENCONTRE RAPIDAMENTE</small><h2 id="searchTitle">Buscar no sistema</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="Fechar busca">{{ icon('close') }}</button></div>
+  <div class="command-input">{{ icon('search') }}<input type="search" id="commandSearch" placeholder="Cliente, telefone, serviço ou orçamento..." autocomplete="off" aria-label="Buscar cliente, serviço ou orçamento" role="combobox" aria-controls="commandResults" aria-expanded="false" aria-autocomplete="list"></div>
+  <p class="search-hint" id="searchHint" role="status">Digite pelo menos 2 caracteres para buscar.</p><div id="commandResults" class="command-results" role="listbox" aria-label="Resultados da busca"></div>
+  <div class="command-footer"><span>↑ ↓ navegar · Enter abrir</span><span>Esc fechar</span></div>
+</dialog>
+<dialog class="create-dialog no-print" id="createDialog" aria-labelledby="createTitle">
+  <div class="dialog-heading"><div><small>COMECE POR AQUI</small><h2 id="createTitle">O que vamos criar?</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="Fechar atalhos">{{ icon('close') }}</button></div>
+  {% for endpoint,label,hint,symbol in [('service_new','Novo serviço','Agende um atendimento','wrench'),('quote_new','Novo orçamento','Prepare uma proposta','file'),('client_new','Novo cliente','Cadastre nome e contato','users'),('finance_new','Novo gasto','Registre uma despesa','wallet')] %}
+  <a class="create-option" href="{{ url_for(endpoint) }}"><span class="create-option-icon">{{ icon(symbol) }}</span><span><strong>{{ label }}</strong><small>{{ hint }}</small></span>{{ icon('chevron') }}</a>
+  {% endfor %}
+</dialog>
 {% endif %}
-<script src="{{ url_for('static', filename='app.js') }}?v=20260910-clientflow"></script>{% block scripts %}{% endblock %}
+<script src="{{ url_for('static',filename='app.js') }}?v=20261007"></script>
+<script src="{{ url_for('static',filename='executive.js') }}?v=20261007-1"></script>
+{% block scripts %}{% endblock %}
 </body></html>

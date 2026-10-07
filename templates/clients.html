@@ -1,33 +1,14 @@
-{% extends 'base.html' %}
+{% extends 'base.html' %}{% from 'ui.html' import icon %}
+{% block title %}Clientes · {{ app_settings.business_name }}{% endblock %}
 {% block content %}
-<div class="page-head">
-  <div><h1>Clientes</h1><p>Cadastro, endereço, contato e histórico de cada cliente.</p></div>
-  <a class="btn primary" href="{{ url_for('client_new') }}">+ Novo cliente</a>
-</div>
-<form class="filters" method="get">
-  <input class="input" name="q" value="{{ q }}" placeholder="Buscar nome, telefone, CPF ou cidade">
-  <button class="btn" type="submit">Buscar</button>
-  {% if q %}<a class="btn" href="{{ url_for('clients') }}">Limpar</a>{% endif %}
-</form>
-<div class="card"><div class="card-body"><div class="list">
+<div class="page-head"><div><span class="eyebrow">RELACIONAMENTO</span><h1>Clientes<span class="heading-dot">.</span></h1><p>Contatos, endereços e o histórico de cada atendimento.</p></div><a class="btn primary" href="{{ url_for('client_new') }}">{{ icon('plus') }}Novo cliente</a></div>
+<form class="filters" method="get" role="search"><input class="input" type="search" name="q" value="{{ q }}" placeholder="Nome, telefone, CPF ou cidade" aria-label="Buscar clientes"><button class="btn" type="submit">{{ icon('search') }}Buscar</button>{% if q %}<a class="btn" href="{{ url_for('clients') }}">Limpar</a>{% endif %}</form>
+<div class="card"><div class="card-head"><h2>Seus clientes</h2><span class="list-summary"><strong>{{ clients|length }}</strong> encontrado(s)</span></div><div class="card-body"><div class="list">
 {% for c in clients %}
-  <div class="client-row">
-    <div class="row-main">
-      <div class="row-title">{{ c.name }}</div>
-      <div class="row-sub">{{ c.phone or 'Sem telefone' }}{% if c.city %} · {{ c.city }}{% endif %} · {{ c.services|length }} serviço(s)</div>
-    </div>
-    <div class="actions">
-      <a class="btn sm" href="{{ url_for('client_detail', client_id=c.id) }}">Abrir</a>
-      <a class="btn sm" href="{{ url_for('client_edit', client_id=c.id) }}">✏️ Editar</a>
-      {% if c.address %}<a class="btn sm maps-btn" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query={{ c.address|urlencode }}">📍 Maps</a>{% endif %}
-      {% if c.phone %}<a class="btn sm success" target="_blank" href="https://wa.me/{{ c.phone|wa }}">WhatsApp</a>{% endif %}
-      <form method="post" action="{{ url_for('client_delete', client_id=c.id) }}" onsubmit="return confirmDelete('Excluir este cliente? Se houver serviços ou orçamentos, o sistema protege o histórico.')">
-        <button class="btn sm danger" type="submit">🗑 Excluir</button>
-      </form>
-    </div>
-  </div>
+ <div class="client-row"><span class="client-avatar" aria-hidden="true">{{ c.name[:1]|upper }}</span><div class="row-main"><a class="row-title client-name-link" href="{{ url_for('client_detail',client_id=c.id) }}">{{ c.name }}</a><div class="row-sub">{{ c.phone or 'Sem telefone' }}{% if c.city %} · {{ c.city }}{% endif %}</div><span class="client-history">{{ c.services|length }} serviço(s) no histórico</span></div>
+ <div class="actions"><a class="btn sm" href="{{ url_for('client_detail',client_id=c.id) }}">Abrir{{ icon('arrow') }}</a>{% if c.phone %}<a class="btn sm success" href="https://wa.me/{{ c.phone|wa }}" target="_blank" rel="noopener">WhatsApp</a>{% endif %}<details class="row-menu"><summary aria-label="Mais ações para {{ c.name }}">Mais</summary><div class="row-menu-body"><a class="btn sm" href="{{ url_for('client_edit',client_id=c.id) }}">Editar</a>{% if c.address %}<a class="btn sm" href="https://www.google.com/maps/search/?api=1&query={{ c.address|urlencode }}" target="_blank" rel="noopener">Maps</a>{% endif %}<form method="post" action="{{ url_for('client_delete',client_id=c.id) }}" onsubmit="return confirmDelete('Excluir este cliente? Se houver serviços ou orçamentos, o sistema protege o histórico.')"><button class="btn sm danger" type="submit">Excluir</button></form></div></details></div></div>
 {% else %}
-  <div class="empty">Nenhum cliente encontrado.</div>
+ <div class="empty-state">{{ icon('users') }}<strong>{{ 'Nenhum resultado para essa busca' if q else 'Seu primeiro cliente começa aqui' }}</strong><p>{{ 'Tente outro nome, telefone ou cidade.' if q else 'Cadastre um contato para reunir serviços e orçamentos.' }}</p><a class="btn primary" href="{{ url_for('clients') if q else url_for('client_new') }}">{{ 'Limpar busca' if q else 'Cadastrar cliente' }}</a></div>
 {% endfor %}
 </div></div></div>
 {% endblock %}

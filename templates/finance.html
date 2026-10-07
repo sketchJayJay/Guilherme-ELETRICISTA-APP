@@ -1,8 +1,8 @@
-{% extends 'base.html' %}{% block content %}
+{% extends 'base.html' %}{% from 'ui.html' import icon %}{% block content %}
 <div class="page-head">
   <div>
     <h1>Financeiro</h1>
-    <p>Fechamento por mês usando os serviços e gastos cadastrados como fonte principal.</p>
+    <p>Seu resultado do mês, os recebimentos e cada gasto em uma visão clara.</p>
   </div>
   <div class="actions">
     <form method="post" action="{{ url_for('finance_reconcile') }}">
@@ -20,14 +20,14 @@
     <div>
       <div class="finance-month-kicker">{% if summary.is_current_month %}RESUMO PARCIAL DO MÊS{% elif summary.is_future_month %}PREVISÃO DO MÊS{% else %}FECHAMENTO DO MÊS{% endif %}</div>
       <h2>{{ summary.month_label }}</h2>
-      <p>O faturamento vem diretamente dos serviços do mês. Os gastos incluem o que já foi pago e o que ainda está a pagar.</p>
+      <p>Faturamento e recebimentos dos serviços do mês. Gastos incluem despesas pagas e pendentes.</p>
     </div>
     <form method="get" class="finance-month-picker">
       <input type="hidden" name="start" value="{{ summary.month_start.isoformat() }}">
       <input type="hidden" name="end" value="{{ summary.month_end.isoformat() }}">
       <input class="input" type="month" name="month" value="{{ summary.month_value }}">
       <button class="btn" type="submit">Ver mês</button>
-      <a class="btn blue" href="{{ url_for('finance_monthly_pdf', month=summary.month_value) }}">📄 Resumo PDF</a>
+      <a class="btn blue" href="{{ url_for('finance_monthly_pdf', month=summary.month_value) }}">{{ icon('file') }}Resumo PDF</a>
     </form>
   </div>
 
@@ -58,6 +58,15 @@
     </a>
   </div>
 
+  {% set received_rate = (summary.received / summary.billed * 100)|float if summary.billed > 0 else 0 %}
+  {% set expense_rate = (summary.expenses / summary.billed * 100)|float if summary.billed > 0 else 0 %}
+  {% set profit_rate = (summary.profit / summary.billed * 100)|float if summary.billed > 0 else 0 %}
+  <div class="finance-insights" aria-label="Indicadores percentuais do mês">
+    {% for label,rate,symbol,tone,hint in [('Já recebido',received_rate,'wallet','#86d8b4','Percentual do faturamento recebido'),('Margem do mês',profit_rate,'trend','#86bde7','Lucro dividido pelo faturamento'),('Peso dos gastos',expense_rate,'chart','#dfa2ab','Gastos divididos pelo faturamento')] %}
+    <div class="finance-insight"><span class="insight-ring" style="--pct:{{ [100,[0,rate]|max]|min }};--ring-color:{{ tone }}" aria-hidden="true">{{ icon(symbol) }}</span><div><small>{{ label }}</small><strong>{{ ('%.1f'|format(rate))|replace('.',',') ~ '%' if summary.billed > 0 else '—' }}</strong><p>{{ hint if summary.billed > 0 else 'Sem faturamento para calcular' }}</p></div></div>
+    {% endfor %}
+  </div>
+
   <div class="finance-check-line">
     <strong>Conferência:</strong>
     <span>{{ summary.billed|money }} faturado − {{ summary.expenses|money }} em gastos = <b>{{ summary.profit|money }} de lucro</b>.</span>
@@ -69,7 +78,7 @@
       <div class="finance-breakdown-title"><strong>Gastos por categoria</strong><span>{{ summary.expense_categories|length }} categoria(s)</span></div>
       <div class="finance-category-list">
         {% for category, amount in summary.expense_categories[:8] %}
-        <div class="finance-category-row"><span>{{ category }}</span><strong>{{ amount|money }}</strong></div>
+        <div><div class="finance-category-row"><span>{{ category }}</span><strong>{{ amount|money }}</strong></div><div class="finance-category-bar" role="img" aria-label="{{ category }}: {{ amount|money }}"><span style="width:{{ (amount / summary.expenses * 100)|round(2) if summary.expenses > 0 else 0 }}%"></span></div></div>
         {% else %}<div class="empty">Nenhum gasto lançado neste mês.</div>{% endfor %}
       </div>
     </div>
@@ -172,7 +181,7 @@
 
 <div class="card finance-ledger-card">
   <div class="card-head">
-    <div><h2>Lançamentos individuais</h2><span class="muted">Use esta lista para entradas/gastos avulsos e baixas. O fechamento acima é calculado diretamente dos serviços + gastos.</span></div>
+    <div><h2>Lançamentos individuais</h2><span class="muted">Consulte entradas, despesas e pagamentos. Use os filtros para encontrar um lançamento.</span></div>
   </div>
   <div class="toolbar finance-filter-bar">
     <form method="get">
